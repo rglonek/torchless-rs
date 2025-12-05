@@ -1,6 +1,7 @@
 use crate::tensor::Tensor1;
 use ndarray::{Array1, Array2};
 
+#[cfg(test)]
 mod tests;
 
 /// Matrix multiplication: out = W @ x

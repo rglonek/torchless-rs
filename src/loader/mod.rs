@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 mod parameters;
+#[cfg(test)]
 mod tests;
 
 pub use parameters::Parameters;

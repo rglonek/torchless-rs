@@ -1,6 +1,7 @@
 use crate::model::InferenceState;
 use rand::Rng;
 
+#[cfg(test)]
 mod tests;
 
 pub fn sample_greedy(state: &InferenceState) -> u32 {

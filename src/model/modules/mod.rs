@@ -3,6 +3,7 @@ mod embedding;
 mod layer;
 mod mlp;
 mod rmsnorm;
+#[cfg(test)]
 mod tests;
 
 pub use attention::Attention;

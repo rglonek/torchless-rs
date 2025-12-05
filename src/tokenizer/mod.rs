@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+#[cfg(test)]
 mod tests;
 
 const METASPACE: &str = "▁";

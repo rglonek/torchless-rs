@@ -1,0 +1,22 @@
+[package]
+name = "torchless"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ndarray = "0.16"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+anyhow = "1.0"
+memmap2 = "0.9"
+byteorder = "1.5"
+rand = "0.8"
+
+[lib]
+name = "torchless"
+path = "src/lib.rs"
+
+[[bin]]
+name = "torchless"
+path = "src/main.rs"

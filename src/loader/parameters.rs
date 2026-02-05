@@ -1,7 +1,9 @@
 use super::{Config, Header, TensorInfo};
+use super::quantization::{Q4_0Block, Q8_0Block, Q4KMBlock, Q4KSBlock, QK4_0, QK8_0, QK_K};
 use crate::tokenizer::Tokenizer;
 use anyhow::{Context, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
+use half::f16;
 use memmap2::Mmap;
 use std::collections::HashMap;
 use std::fs::File;
@@ -10,9 +12,70 @@ use std::path::Path;
 
 /// Tensor data type enumeration
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(non_camel_case_types)]
 pub enum TensorDtype {
+    /// 32-bit floating point
     F32,
+    /// 16-bit floating point (IEEE 754)
+    F16,
+    /// 16-bit brain floating point
+    BF16,
+    /// 8-bit integer with group quantization (legacy format)
     Int8,
+    /// 8-bit quantization (GGUF Q8_0 compatible)
+    Q8_0,
+    /// 4-bit quantization (GGUF Q4_0 compatible)
+    Q4_0,
+    /// 4-bit K-quantization medium (GGUF Q4_K_M compatible)
+    Q4_K_M,
+    /// 4-bit K-quantization small (GGUF Q4_K_S compatible)
+    Q4_K_S,
+}
+
+impl TensorDtype {
+    /// Parse dtype from string representation
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "f32" | "float32" => Some(TensorDtype::F32),
+            "f16" | "float16" => Some(TensorDtype::F16),
+            "bf16" | "bfloat16" => Some(TensorDtype::BF16),
+            "int8" => Some(TensorDtype::Int8),
+            "q8_0" => Some(TensorDtype::Q8_0),
+            "q4_0" => Some(TensorDtype::Q4_0),
+            "q4_k_m" | "q4_k" => Some(TensorDtype::Q4_K_M),
+            "q4_k_s" => Some(TensorDtype::Q4_K_S),
+            _ => None,
+        }
+    }
+
+    /// Get block size for quantized formats
+    pub fn block_size(&self) -> usize {
+        match self {
+            TensorDtype::F32 | TensorDtype::F16 | TensorDtype::BF16 => 1,
+            TensorDtype::Int8 => 64, // Legacy format uses 64 elements per group
+            TensorDtype::Q8_0 => QK8_0,
+            TensorDtype::Q4_0 => QK4_0,
+            TensorDtype::Q4_K_M | TensorDtype::Q4_K_S => QK_K,
+        }
+    }
+
+    /// Get bytes per block for this dtype
+    pub fn bytes_per_block(&self) -> usize {
+        match self {
+            TensorDtype::F32 => 4,
+            TensorDtype::F16 | TensorDtype::BF16 => 2,
+            TensorDtype::Int8 => 1,
+            TensorDtype::Q8_0 => Q8_0Block::SIZE,
+            TensorDtype::Q4_0 => Q4_0Block::SIZE,
+            TensorDtype::Q4_K_M => Q4KMBlock::SIZE,
+            TensorDtype::Q4_K_S => Q4KSBlock::SIZE,
+        }
+    }
+
+    /// Returns true if this dtype is quantized
+    pub fn is_quantized(&self) -> bool {
+        !matches!(self, TensorDtype::F32 | TensorDtype::F16 | TensorDtype::BF16)
+    }
 }
 
 /// A lazy view into a tensor stored in the memory-mapped file.
@@ -20,16 +83,31 @@ pub enum TensorDtype {
 /// until the data is actually needed.
 #[derive(Debug)]
 pub struct TensorView<'a> {
-    /// Raw data bytes (f32 as bytes or int8 values)
+    /// Raw data bytes (varies by dtype)
     pub data: &'a [u8],
     /// Shape of the tensor
     pub shape: Vec<usize>,
     /// Data type
     pub dtype: TensorDtype,
-    /// Quantization scales (only for int8 tensors)
+    /// Quantization scales (only for legacy int8 tensors)
     pub scales: Option<&'a [u8]>,
-    /// Number of elements per quantization group (typically 64)
+    /// Number of elements per quantization group (for legacy int8, typically 64)
     pub group_size: usize,
+}
+
+impl TensorDtype {
+    /// Get the data size in bytes for a tensor with given number of elements
+    pub fn data_bytes(&self, numel: usize) -> usize {
+        match self {
+            TensorDtype::F32 => numel * 4,
+            TensorDtype::F16 | TensorDtype::BF16 => numel * 2,
+            TensorDtype::Int8 => numel, // 1 byte per element, scales stored separately
+            TensorDtype::Q8_0 => numel.div_ceil(QK8_0) * Q8_0Block::SIZE,
+            TensorDtype::Q4_0 => numel.div_ceil(QK4_0) * Q4_0Block::SIZE,
+            TensorDtype::Q4_K_M => numel.div_ceil(QK_K) * Q4KMBlock::SIZE,
+            TensorDtype::Q4_K_S => numel.div_ceil(QK_K) * Q4KSBlock::SIZE,
+        }
+    }
 }
 
 impl TensorView<'_> {
@@ -61,8 +139,8 @@ impl TensorView<'_> {
     }
 
     /// Dequantize a single row and return as Vec<f32>
-    /// For f32 tensors, this just copies the row.
-    /// For int8 tensors, this dequantizes on-the-fly.
+    /// For f32/f16 tensors, this converts to f32.
+    /// For quantized tensors, this dequantizes on-the-fly.
     pub fn get_row(&self, row: usize) -> Vec<f32> {
         let ncols = self.ncols();
         let row_start = row * ncols;
@@ -80,8 +158,32 @@ impl TensorView<'_> {
                 }
                 result
             }
+            TensorDtype::F16 => {
+                // Read f16 values and convert to f32
+                let byte_start = row_start * 2;
+                let byte_end = byte_start + ncols * 2;
+                let row_bytes = &self.data[byte_start..byte_end];
+                let mut result = Vec::with_capacity(ncols);
+                for i in 0..ncols {
+                    let f16_val = f16::from_le_bytes([row_bytes[i * 2], row_bytes[i * 2 + 1]]);
+                    result.push(f16_val.to_f32());
+                }
+                result
+            }
+            TensorDtype::BF16 => {
+                // Read bf16 values and convert to f32
+                let byte_start = row_start * 2;
+                let byte_end = byte_start + ncols * 2;
+                let row_bytes = &self.data[byte_start..byte_end];
+                let mut result = Vec::with_capacity(ncols);
+                for i in 0..ncols {
+                    let bits = u16::from_le_bytes([row_bytes[i * 2], row_bytes[i * 2 + 1]]);
+                    result.push(f32::from_bits((bits as u32) << 16));
+                }
+                result
+            }
             TensorDtype::Int8 => {
-                // Dequantize int8 values using scales
+                // Dequantize int8 values using scales (legacy format)
                 let scales_bytes = self.scales.expect("Int8 tensor must have scales");
                 let row_bytes = &self.data[row_start..row_start + ncols];
                 let mut result = Vec::with_capacity(ncols);
@@ -98,6 +200,70 @@ impl TensorView<'_> {
                         scales_bytes[scale_byte_offset + 3],
                     ]);
                     result.push(q_val as i8 as f32 / scale);
+                }
+                result
+            }
+            TensorDtype::Q8_0 => {
+                // Dequantize Q8_0 blocks
+                let mut result = Vec::with_capacity(ncols);
+                let n_blocks = ncols.div_ceil(QK8_0);
+                let block_offset = row * n_blocks * Q8_0Block::SIZE;
+                
+                for b in 0..n_blocks {
+                    let block_start = block_offset + b * Q8_0Block::SIZE;
+                    let block_end = block_start + Q8_0Block::SIZE;
+                    let block = Q8_0Block::from_bytes(&self.data[block_start..block_end]);
+                    let values = block.dequantize_block();
+                    let take = (ncols - result.len()).min(QK8_0);
+                    result.extend_from_slice(&values[..take]);
+                }
+                result
+            }
+            TensorDtype::Q4_0 => {
+                // Dequantize Q4_0 blocks
+                let mut result = Vec::with_capacity(ncols);
+                let n_blocks = ncols.div_ceil(QK4_0);
+                let block_offset = row * n_blocks * Q4_0Block::SIZE;
+                
+                for b in 0..n_blocks {
+                    let block_start = block_offset + b * Q4_0Block::SIZE;
+                    let block_end = block_start + Q4_0Block::SIZE;
+                    let block = Q4_0Block::from_bytes(&self.data[block_start..block_end]);
+                    let values = block.dequantize_block();
+                    let take = (ncols - result.len()).min(QK4_0);
+                    result.extend_from_slice(&values[..take]);
+                }
+                result
+            }
+            TensorDtype::Q4_K_M => {
+                // Dequantize Q4_K_M blocks
+                let mut result = Vec::with_capacity(ncols);
+                let n_blocks = ncols.div_ceil(QK_K);
+                let block_offset = row * n_blocks * Q4KMBlock::SIZE;
+                
+                for b in 0..n_blocks {
+                    let block_start = block_offset + b * Q4KMBlock::SIZE;
+                    let block_end = block_start + Q4KMBlock::SIZE;
+                    let block = Q4KMBlock::from_bytes(&self.data[block_start..block_end]);
+                    let values = block.dequantize_block();
+                    let take = (ncols - result.len()).min(QK_K);
+                    result.extend_from_slice(&values[..take]);
+                }
+                result
+            }
+            TensorDtype::Q4_K_S => {
+                // Dequantize Q4_K_S blocks
+                let mut result = Vec::with_capacity(ncols);
+                let n_blocks = ncols.div_ceil(QK_K);
+                let block_offset = row * n_blocks * Q4KSBlock::SIZE;
+                
+                for b in 0..n_blocks {
+                    let block_start = block_offset + b * Q4KSBlock::SIZE;
+                    let block_end = block_start + Q4KSBlock::SIZE;
+                    let block = Q4KSBlock::from_bytes(&self.data[block_start..block_end]);
+                    let values = block.dequantize_block();
+                    let take = (ncols - result.len()).min(QK_K);
+                    result.extend_from_slice(&values[..take]);
                 }
                 result
             }
@@ -120,6 +286,22 @@ impl TensorView<'_> {
                     self.data[byte_offset + 3],
                 ])
             }
+            TensorDtype::F16 => {
+                let byte_offset = idx * 2;
+                let f16_val = f16::from_le_bytes([
+                    self.data[byte_offset],
+                    self.data[byte_offset + 1],
+                ]);
+                f16_val.to_f32()
+            }
+            TensorDtype::BF16 => {
+                let byte_offset = idx * 2;
+                let bits = u16::from_le_bytes([
+                    self.data[byte_offset],
+                    self.data[byte_offset + 1],
+                ]);
+                f32::from_bits((bits as u32) << 16)
+            }
             TensorDtype::Int8 => {
                 let scales_bytes = self.scales.expect("Int8 tensor must have scales");
                 let q_val = self.data[idx] as i8;
@@ -132,6 +314,38 @@ impl TensorView<'_> {
                     scales_bytes[scale_byte_offset + 3],
                 ]);
                 q_val as f32 / scale
+            }
+            TensorDtype::Q8_0 => {
+                let block_idx = idx / QK8_0;
+                let within_block = idx % QK8_0;
+                let block_start = block_idx * Q8_0Block::SIZE;
+                let block_end = block_start + Q8_0Block::SIZE;
+                let block = Q8_0Block::from_bytes(&self.data[block_start..block_end]);
+                block.dequantize(within_block)
+            }
+            TensorDtype::Q4_0 => {
+                let block_idx = idx / QK4_0;
+                let within_block = idx % QK4_0;
+                let block_start = block_idx * Q4_0Block::SIZE;
+                let block_end = block_start + Q4_0Block::SIZE;
+                let block = Q4_0Block::from_bytes(&self.data[block_start..block_end]);
+                block.dequantize(within_block)
+            }
+            TensorDtype::Q4_K_M => {
+                let block_idx = idx / QK_K;
+                let within_block = idx % QK_K;
+                let block_start = block_idx * Q4KMBlock::SIZE;
+                let block_end = block_start + Q4KMBlock::SIZE;
+                let block = Q4KMBlock::from_bytes(&self.data[block_start..block_end]);
+                block.dequantize(within_block)
+            }
+            TensorDtype::Q4_K_S => {
+                let block_idx = idx / QK_K;
+                let within_block = idx % QK_K;
+                let block_start = block_idx * Q4KSBlock::SIZE;
+                let block_end = block_start + Q4KSBlock::SIZE;
+                let block = Q4KSBlock::from_bytes(&self.data[block_start..block_end]);
+                block.dequantize(within_block)
             }
         }
     }
@@ -166,8 +380,35 @@ impl TensorView<'_> {
                     *result_elem = dot;
                 }
             }
+            TensorDtype::F16 => {
+                // Fused f16->f32 conversion + dot product
+                for (row, result_elem) in result.iter_mut().enumerate() {
+                    let byte_start = row * ncols * 2;
+                    let row_bytes = &self.data[byte_start..byte_start + ncols * 2];
+                    let mut dot = 0.0f32;
+                    for (i, x_elem) in x.iter().enumerate() {
+                        let f16_val = f16::from_le_bytes([row_bytes[i * 2], row_bytes[i * 2 + 1]]);
+                        dot += f16_val.to_f32() * x_elem;
+                    }
+                    *result_elem = dot;
+                }
+            }
+            TensorDtype::BF16 => {
+                // Fused bf16->f32 conversion + dot product
+                for (row, result_elem) in result.iter_mut().enumerate() {
+                    let byte_start = row * ncols * 2;
+                    let row_bytes = &self.data[byte_start..byte_start + ncols * 2];
+                    let mut dot = 0.0f32;
+                    for (i, x_elem) in x.iter().enumerate() {
+                        let bits = u16::from_le_bytes([row_bytes[i * 2], row_bytes[i * 2 + 1]]);
+                        let w = f32::from_bits((bits as u32) << 16);
+                        dot += w * x_elem;
+                    }
+                    *result_elem = dot;
+                }
+            }
             TensorDtype::Int8 => {
-                // Fused dequantize + dot product
+                // Fused dequantize + dot product (legacy format)
                 let scales_bytes = self.scales.expect("Int8 tensor must have scales");
 
                 for (row, result_elem) in result.iter_mut().enumerate() {
@@ -187,6 +428,106 @@ impl TensorView<'_> {
                         ]);
                         let w = q_val as i8 as f32 / scale;
                         dot += w * x_val;
+                    }
+                    *result_elem = dot;
+                }
+            }
+            TensorDtype::Q8_0 => {
+                // Fused Q8_0 dequantize + dot product
+                let n_blocks_per_row = ncols.div_ceil(QK8_0);
+                
+                for (row, result_elem) in result.iter_mut().enumerate() {
+                    let row_offset = row * n_blocks_per_row * Q8_0Block::SIZE;
+                    let mut dot = 0.0f32;
+                    let mut x_idx = 0;
+                    
+                    for b in 0..n_blocks_per_row {
+                        let block_start = row_offset + b * Q8_0Block::SIZE;
+                        let block = Q8_0Block::from_bytes(&self.data[block_start..block_start + Q8_0Block::SIZE]);
+                        let scale = block.scale_f32();
+                        
+                        let elements_in_block = (ncols - x_idx).min(QK8_0);
+                        for i in 0..elements_in_block {
+                            let w = block.qs[i] as f32 * scale;
+                            dot += w * x[x_idx];
+                            x_idx += 1;
+                        }
+                    }
+                    *result_elem = dot;
+                }
+            }
+            TensorDtype::Q4_0 => {
+                // Fused Q4_0 dequantize + dot product
+                let n_blocks_per_row = ncols.div_ceil(QK4_0);
+                
+                for (row, result_elem) in result.iter_mut().enumerate() {
+                    let row_offset = row * n_blocks_per_row * Q4_0Block::SIZE;
+                    let mut dot = 0.0f32;
+                    let mut x_idx = 0;
+                    
+                    for b in 0..n_blocks_per_row {
+                        let block_start = row_offset + b * Q4_0Block::SIZE;
+                        let block = Q4_0Block::from_bytes(&self.data[block_start..block_start + Q4_0Block::SIZE]);
+                        let scale = block.scale_f32();
+                        
+                        let elements_in_block = (ncols - x_idx).min(QK4_0);
+                        for i in 0..elements_in_block {
+                            let byte_idx = i / 2;
+                            let nibble = if i % 2 == 0 {
+                                block.qs[byte_idx] & 0x0F
+                            } else {
+                                block.qs[byte_idx] >> 4
+                            };
+                            let w = (nibble as i8 - 8) as f32 * scale;
+                            dot += w * x[x_idx];
+                            x_idx += 1;
+                        }
+                    }
+                    *result_elem = dot;
+                }
+            }
+            TensorDtype::Q4_K_M => {
+                // Fused Q4_K_M dequantize + dot product
+                let n_blocks_per_row = ncols.div_ceil(QK_K);
+                
+                for (row, result_elem) in result.iter_mut().enumerate() {
+                    let row_offset = row * n_blocks_per_row * Q4KMBlock::SIZE;
+                    let mut dot = 0.0f32;
+                    let mut x_idx = 0;
+                    
+                    for b in 0..n_blocks_per_row {
+                        let block_start = row_offset + b * Q4KMBlock::SIZE;
+                        let block = Q4KMBlock::from_bytes(&self.data[block_start..block_start + Q4KMBlock::SIZE]);
+                        
+                        let elements_in_block = (ncols - x_idx).min(QK_K);
+                        for i in 0..elements_in_block {
+                            let w = block.dequantize(i);
+                            dot += w * x[x_idx];
+                            x_idx += 1;
+                        }
+                    }
+                    *result_elem = dot;
+                }
+            }
+            TensorDtype::Q4_K_S => {
+                // Fused Q4_K_S dequantize + dot product
+                let n_blocks_per_row = ncols.div_ceil(QK_K);
+                
+                for (row, result_elem) in result.iter_mut().enumerate() {
+                    let row_offset = row * n_blocks_per_row * Q4KSBlock::SIZE;
+                    let mut dot = 0.0f32;
+                    let mut x_idx = 0;
+                    
+                    for b in 0..n_blocks_per_row {
+                        let block_start = row_offset + b * Q4KSBlock::SIZE;
+                        let block = Q4KSBlock::from_bytes(&self.data[block_start..block_start + Q4KSBlock::SIZE]);
+                        
+                        let elements_in_block = (ncols - x_idx).min(QK_K);
+                        for i in 0..elements_in_block {
+                            let w = block.dequantize(i);
+                            dot += w * x[x_idx];
+                            x_idx += 1;
+                        }
                     }
                     *result_elem = dot;
                 }
@@ -216,6 +557,31 @@ impl TensorView<'_> {
                     *out_elem = dot;
                 }
             }
+            TensorDtype::F16 => {
+                for (row, out_elem) in out.iter_mut().enumerate() {
+                    let byte_start = row * ncols * 2;
+                    let row_bytes = &self.data[byte_start..byte_start + ncols * 2];
+                    let mut dot = 0.0f32;
+                    for (i, x_elem) in x.iter().enumerate() {
+                        let f16_val = f16::from_le_bytes([row_bytes[i * 2], row_bytes[i * 2 + 1]]);
+                        dot += f16_val.to_f32() * x_elem;
+                    }
+                    *out_elem = dot;
+                }
+            }
+            TensorDtype::BF16 => {
+                for (row, out_elem) in out.iter_mut().enumerate() {
+                    let byte_start = row * ncols * 2;
+                    let row_bytes = &self.data[byte_start..byte_start + ncols * 2];
+                    let mut dot = 0.0f32;
+                    for (i, x_elem) in x.iter().enumerate() {
+                        let bits = u16::from_le_bytes([row_bytes[i * 2], row_bytes[i * 2 + 1]]);
+                        let w = f32::from_bits((bits as u32) << 16);
+                        dot += w * x_elem;
+                    }
+                    *out_elem = dot;
+                }
+            }
             TensorDtype::Int8 => {
                 let scales_bytes = self.scales.expect("Int8 tensor must have scales");
 
@@ -236,6 +602,102 @@ impl TensorView<'_> {
                         ]);
                         let w = q_val as i8 as f32 / scale;
                         dot += w * x_val;
+                    }
+                    *out_elem = dot;
+                }
+            }
+            TensorDtype::Q8_0 => {
+                let n_blocks_per_row = ncols.div_ceil(QK8_0);
+                
+                for (row, out_elem) in out.iter_mut().enumerate() {
+                    let row_offset = row * n_blocks_per_row * Q8_0Block::SIZE;
+                    let mut dot = 0.0f32;
+                    let mut x_idx = 0;
+                    
+                    for b in 0..n_blocks_per_row {
+                        let block_start = row_offset + b * Q8_0Block::SIZE;
+                        let block = Q8_0Block::from_bytes(&self.data[block_start..block_start + Q8_0Block::SIZE]);
+                        let scale = block.scale_f32();
+                        
+                        let elements_in_block = (ncols - x_idx).min(QK8_0);
+                        for i in 0..elements_in_block {
+                            let w = block.qs[i] as f32 * scale;
+                            dot += w * x[x_idx];
+                            x_idx += 1;
+                        }
+                    }
+                    *out_elem = dot;
+                }
+            }
+            TensorDtype::Q4_0 => {
+                let n_blocks_per_row = ncols.div_ceil(QK4_0);
+                
+                for (row, out_elem) in out.iter_mut().enumerate() {
+                    let row_offset = row * n_blocks_per_row * Q4_0Block::SIZE;
+                    let mut dot = 0.0f32;
+                    let mut x_idx = 0;
+                    
+                    for b in 0..n_blocks_per_row {
+                        let block_start = row_offset + b * Q4_0Block::SIZE;
+                        let block = Q4_0Block::from_bytes(&self.data[block_start..block_start + Q4_0Block::SIZE]);
+                        let scale = block.scale_f32();
+                        
+                        let elements_in_block = (ncols - x_idx).min(QK4_0);
+                        for i in 0..elements_in_block {
+                            let byte_idx = i / 2;
+                            let nibble = if i % 2 == 0 {
+                                block.qs[byte_idx] & 0x0F
+                            } else {
+                                block.qs[byte_idx] >> 4
+                            };
+                            let w = (nibble as i8 - 8) as f32 * scale;
+                            dot += w * x[x_idx];
+                            x_idx += 1;
+                        }
+                    }
+                    *out_elem = dot;
+                }
+            }
+            TensorDtype::Q4_K_M => {
+                let n_blocks_per_row = ncols.div_ceil(QK_K);
+                
+                for (row, out_elem) in out.iter_mut().enumerate() {
+                    let row_offset = row * n_blocks_per_row * Q4KMBlock::SIZE;
+                    let mut dot = 0.0f32;
+                    let mut x_idx = 0;
+                    
+                    for b in 0..n_blocks_per_row {
+                        let block_start = row_offset + b * Q4KMBlock::SIZE;
+                        let block = Q4KMBlock::from_bytes(&self.data[block_start..block_start + Q4KMBlock::SIZE]);
+                        
+                        let elements_in_block = (ncols - x_idx).min(QK_K);
+                        for i in 0..elements_in_block {
+                            let w = block.dequantize(i);
+                            dot += w * x[x_idx];
+                            x_idx += 1;
+                        }
+                    }
+                    *out_elem = dot;
+                }
+            }
+            TensorDtype::Q4_K_S => {
+                let n_blocks_per_row = ncols.div_ceil(QK_K);
+                
+                for (row, out_elem) in out.iter_mut().enumerate() {
+                    let row_offset = row * n_blocks_per_row * Q4KSBlock::SIZE;
+                    let mut dot = 0.0f32;
+                    let mut x_idx = 0;
+                    
+                    for b in 0..n_blocks_per_row {
+                        let block_start = row_offset + b * Q4KSBlock::SIZE;
+                        let block = Q4KSBlock::from_bytes(&self.data[block_start..block_start + Q4KSBlock::SIZE]);
+                        
+                        let elements_in_block = (ncols - x_idx).min(QK_K);
+                        for i in 0..elements_in_block {
+                            let w = block.dequantize(i);
+                            dot += w * x[x_idx];
+                            x_idx += 1;
+                        }
                     }
                     *out_elem = dot;
                 }
@@ -328,8 +790,34 @@ impl Parameters {
 
                 Ok(result)
             }
+            "f16" => {
+                // Read f16 and convert to f32
+                let data_end = data_offset + numel * 2;
+                let bytes = &self.mmap[data_offset..data_end];
+                let mut result = Vec::with_capacity(numel);
+
+                for i in 0..numel {
+                    let f16_val = f16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+                    result.push(f16_val.to_f32());
+                }
+
+                Ok(result)
+            }
+            "bf16" => {
+                // Read bf16 and convert to f32
+                let data_end = data_offset + numel * 2;
+                let bytes = &self.mmap[data_offset..data_end];
+                let mut result = Vec::with_capacity(numel);
+
+                for i in 0..numel {
+                    let bits = u16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+                    result.push(f32::from_bits((bits as u32) << 16));
+                }
+
+                Ok(result)
+            }
             "int8" => {
-                // Read int8 and dequantize
+                // Read int8 and dequantize (legacy format)
                 let scale_offset = self.payload_offset + info.scale_offset.unwrap();
                 let scale_size = info.scale_size.unwrap();
                 let group_size = 64;
@@ -355,6 +843,66 @@ impl Parameters {
                     let scale = scales[group_idx];
                     result.push(q_val as f32 / scale);
                 }
+
+                Ok(result)
+            }
+            "q8_0" => {
+                // Read Q8_0 blocks and dequantize
+                let n_blocks = numel.div_ceil(QK8_0);
+                let data_end = data_offset + n_blocks * Q8_0Block::SIZE;
+                let bytes = &self.mmap[data_offset..data_end];
+                let mut result = Vec::with_capacity(numel);
+
+                for block_data in bytes.chunks(Q8_0Block::SIZE) {
+                    let block = Q8_0Block::from_bytes(block_data);
+                    result.extend_from_slice(&block.dequantize_block());
+                }
+                result.truncate(numel);
+
+                Ok(result)
+            }
+            "q4_0" => {
+                // Read Q4_0 blocks and dequantize
+                let n_blocks = numel.div_ceil(QK4_0);
+                let data_end = data_offset + n_blocks * Q4_0Block::SIZE;
+                let bytes = &self.mmap[data_offset..data_end];
+                let mut result = Vec::with_capacity(numel);
+
+                for block_data in bytes.chunks(Q4_0Block::SIZE) {
+                    let block = Q4_0Block::from_bytes(block_data);
+                    result.extend_from_slice(&block.dequantize_block());
+                }
+                result.truncate(numel);
+
+                Ok(result)
+            }
+            "q4_k_m" | "q4_k" => {
+                // Read Q4_K_M blocks and dequantize
+                let n_blocks = numel.div_ceil(QK_K);
+                let data_end = data_offset + n_blocks * Q4KMBlock::SIZE;
+                let bytes = &self.mmap[data_offset..data_end];
+                let mut result = Vec::with_capacity(numel);
+
+                for block_data in bytes.chunks(Q4KMBlock::SIZE) {
+                    let block = Q4KMBlock::from_bytes(block_data);
+                    result.extend_from_slice(&block.dequantize_block());
+                }
+                result.truncate(numel);
+
+                Ok(result)
+            }
+            "q4_k_s" => {
+                // Read Q4_K_S blocks and dequantize
+                let n_blocks = numel.div_ceil(QK_K);
+                let data_end = data_offset + n_blocks * Q4KSBlock::SIZE;
+                let bytes = &self.mmap[data_offset..data_end];
+                let mut result = Vec::with_capacity(numel);
+
+                for block_data in bytes.chunks(Q4KSBlock::SIZE) {
+                    let block = Q4KSBlock::from_bytes(block_data);
+                    result.extend_from_slice(&block.dequantize_block());
+                }
+                result.truncate(numel);
 
                 Ok(result)
             }
@@ -391,8 +939,34 @@ impl Parameters {
                     group_size: 0,
                 })
             }
+            "f16" => {
+                // View f16 data directly as bytes
+                let data_end = data_offset + numel * 2;
+                let data = &self.mmap[data_offset..data_end];
+
+                Ok(TensorView {
+                    data,
+                    shape: info.shape.clone(),
+                    dtype: TensorDtype::F16,
+                    scales: None,
+                    group_size: 0,
+                })
+            }
+            "bf16" => {
+                // View bf16 data directly as bytes
+                let data_end = data_offset + numel * 2;
+                let data = &self.mmap[data_offset..data_end];
+
+                Ok(TensorView {
+                    data,
+                    shape: info.shape.clone(),
+                    dtype: TensorDtype::BF16,
+                    scales: None,
+                    group_size: 0,
+                })
+            }
             "int8" => {
-                // View int8 data and scales
+                // View int8 data and scales (legacy format)
                 let scale_offset = self.payload_offset + info.scale_offset.unwrap();
                 let scale_size = info.scale_size.unwrap();
                 let group_size = 64;
@@ -409,6 +983,62 @@ impl Parameters {
                     dtype: TensorDtype::Int8,
                     scales: Some(scales),
                     group_size,
+                })
+            }
+            "q8_0" => {
+                // View Q8_0 data (blocks are self-contained with scales)
+                let n_blocks = numel.div_ceil(QK8_0);
+                let data_end = data_offset + n_blocks * Q8_0Block::SIZE;
+                let data = &self.mmap[data_offset..data_end];
+
+                Ok(TensorView {
+                    data,
+                    shape: info.shape.clone(),
+                    dtype: TensorDtype::Q8_0,
+                    scales: None,
+                    group_size: QK8_0,
+                })
+            }
+            "q4_0" => {
+                // View Q4_0 data (blocks are self-contained with scales)
+                let n_blocks = numel.div_ceil(QK4_0);
+                let data_end = data_offset + n_blocks * Q4_0Block::SIZE;
+                let data = &self.mmap[data_offset..data_end];
+
+                Ok(TensorView {
+                    data,
+                    shape: info.shape.clone(),
+                    dtype: TensorDtype::Q4_0,
+                    scales: None,
+                    group_size: QK4_0,
+                })
+            }
+            "q4_k_m" | "q4_k" => {
+                // View Q4_K_M data (super-blocks are self-contained)
+                let n_blocks = numel.div_ceil(QK_K);
+                let data_end = data_offset + n_blocks * Q4KMBlock::SIZE;
+                let data = &self.mmap[data_offset..data_end];
+
+                Ok(TensorView {
+                    data,
+                    shape: info.shape.clone(),
+                    dtype: TensorDtype::Q4_K_M,
+                    scales: None,
+                    group_size: QK_K,
+                })
+            }
+            "q4_k_s" => {
+                // View Q4_K_S data (super-blocks are self-contained)
+                let n_blocks = numel.div_ceil(QK_K);
+                let data_end = data_offset + n_blocks * Q4KSBlock::SIZE;
+                let data = &self.mmap[data_offset..data_end];
+
+                Ok(TensorView {
+                    data,
+                    shape: info.shape.clone(),
+                    dtype: TensorDtype::Q4_K_S,
+                    scales: None,
+                    group_size: QK_K,
                 })
             }
             _ => anyhow::bail!("Unsupported dtype: {}", info.dtype),

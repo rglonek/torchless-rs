@@ -138,31 +138,79 @@ cargo build --release
 
 ### Optimized Release
 
+The release profile is already configured with Link-Time Optimization (LTO):
+
 ```toml
-# Cargo.toml
+# Already in Cargo.toml
 [profile.release]
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+opt-level = 3
 ```
 
+For additional optimization, use target-specific CPU instructions:
+
 ```bash
+# Build for current CPU architecture (recommended for best performance)
 RUSTFLAGS="-C target-cpu=native" cargo build --release --features "simd,parallel,openblas"
+
+# Build for specific architectures (for distribution)
+RUSTFLAGS="-C target-cpu=haswell" cargo build --release     # Intel 4th gen+
+RUSTFLAGS="-C target-cpu=skylake" cargo build --release     # Intel 6th gen+
+RUSTFLAGS="-C target-cpu=znver3" cargo build --release      # AMD Zen 3+
+RUSTFLAGS="-C target-cpu=apple-m1" cargo build --release    # Apple M1+
 ```
 
 ### Profile-Guided Optimization (PGO)
 
+PGO can provide 10-15% additional performance improvements. Use the provided script:
+
 ```bash
-# Build with profiling
+# Automated PGO build (recommended)
+MODEL_PATH=/path/to/model.bin ./scripts/pgo-build.sh
+
+# Manual PGO build
+# Step 1: Build with profiling instrumentation
 RUSTFLAGS="-Cprofile-generate=/tmp/pgo-data" cargo build --release
 
-# Run representative workload
+# Step 2: Run representative workload
 ./target/release/torchless model.bin "test" --max-tokens 100
 
-# Build with profile data
-llvm-profdata merge -o /tmp/pgo-data/merged.profdata /tmp/pgo-data
+# Step 3: Merge profile data
+llvm-profdata merge -o /tmp/pgo-data/merged.profdata /tmp/pgo-data/*.profraw
+
+# Step 4: Build with profile data
 RUSTFLAGS="-Cprofile-use=/tmp/pgo-data/merged.profdata" cargo build --release
 ```
+
+### GPU Feature Builds
+
+Build with GPU support (when backends are implemented):
+
+```bash
+# NVIDIA CUDA (Linux/Windows)
+cargo build --release --features "cuda"
+
+# Apple Metal (macOS)
+cargo build --release --features "metal-gpu"
+
+# OpenCL (cross-platform)
+cargo build --release --features "opencl"
+
+# Combine with other features
+cargo build --release --features "cuda,simd,parallel"
+```
+
+### Build Performance Tips
+
+| Configuration | Build Time | Runtime Performance |
+|--------------|------------|---------------------|
+| `cargo build` | Fast | Slow (debug) |
+| `cargo build --release` | Medium | Good |
+| `--release` + LTO | Slow | Better (+5-10%) |
+| `--release` + LTO + `target-cpu=native` | Slow | Best (+10-15%) |
+| `--release` + LTO + PGO | Very slow | Optimal (+15-25%) |
 
 ## Contributing
 

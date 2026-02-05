@@ -2,10 +2,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 mod parameters;
+pub mod quantization;
 #[cfg(test)]
 mod tests;
 
 pub use parameters::{Parameters, TensorDtype, TensorView};
+pub use quantization::{
+    QuantFormat, QuantizedTensor, 
+    Q4_0Block, Q8_0Block, Q4KMBlock, Q4KSBlock,
+    QK4_0, QK8_0, QK_K,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {

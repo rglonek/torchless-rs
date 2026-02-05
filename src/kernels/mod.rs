@@ -1,9 +1,49 @@
 use crate::tensor::Tensor1;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut1};
 
+pub mod backend;
+
+// Architecture-specific SIMD implementations
+pub mod avx512;
+pub mod neon;
+
+// Fused kernel implementations
+pub mod fused;
+
+// Runtime CPU dispatch
+pub mod dispatch;
+
+// Optimized kernels with bounds check elimination and prefetching
+pub mod optimized;
 
 #[cfg(test)]
 mod tests;
+
+// Re-export backend types for convenient access
+pub use backend::{Backend, BackendPreference, CpuBackend, KernelBackend, init_backend, default_backend};
+
+// Re-export dispatch types for runtime CPU feature detection
+pub use dispatch::{
+    CpuFeatures, Dispatcher, cpu_features, global_dispatcher,
+    dispatch_matmul_vec, dispatch_matmul_vec_into, dispatch_rmsnorm,
+    dispatch_softmax, dispatch_silu, dispatch_apply_rope,
+    dispatch_compute_attention_scores, dispatch_weighted_sum_rows,
+};
+
+// Re-export fused kernel functions
+pub use fused::{
+    fused_rmsnorm_linear, fused_rmsnorm_linear_into,
+    fused_swiglu, fused_swiglu_into,
+    fused_attention, fused_attention_into,
+    fused_mlp, fused_mlp_into,
+};
+
+#[cfg(feature = "parallel")]
+pub use fused::{fused_swiglu_parallel, fused_mlp_parallel};
+
+// Re-export architecture-specific availability checks
+pub use avx512::is_avx512_available;
+pub use neon::is_neon_available;
 
 // =============================================================================
 // SIMD-optimized kernel implementations
@@ -612,3 +652,85 @@ pub fn fast_compute_attention_scores(
 ) {
     compute_attention_scores(query, keys, scores, scale)
 }
+
+// =============================================================================
+// Runtime-Dispatched Kernel Selection
+// =============================================================================
+// 
+// The dispatch module provides runtime CPU feature detection and automatic
+// selection of the optimal kernel implementation. Use the `dispatch_*` functions
+// for automatic selection, or create a `Dispatcher` for more control.
+//
+// Feature Priority (highest to lowest):
+// 1. AVX-512F (x86_64) - 16-wide SIMD
+// 2. NEON (aarch64) - 4-wide SIMD with 16-element loop unrolling
+// 3. wide crate (portable) - 8-wide SIMD when compiled with `simd` feature
+// 4. Rayon parallel - multi-threaded when compiled with `parallel` feature
+// 5. Scalar - fallback implementation
+//
+// The `fast_*` functions use compile-time feature selection (simd/parallel).
+// The `dispatch_*` functions use runtime CPU detection for best performance.
+//
+// Example:
+// ```ignore
+// use torchless::kernels::{cpu_features, dispatch_matmul_vec};
+// 
+// // Check what features are available
+// let features = cpu_features();
+// println!("CPU features: {}", features.describe());
+// 
+// // Use runtime dispatch for optimal performance
+// let result = dispatch_matmul_vec(&weights, &input);
+// ```
+
+/// Print CPU feature information to stdout.
+/// Useful for debugging and performance tuning.
+pub fn print_cpu_features() {
+    let features = cpu_features();
+    println!("=== CPU Feature Detection ===");
+    println!("  AVX-512F: {}", features.avx512f);
+    println!("  AVX2: {}", features.avx2);
+    println!("  FMA: {}", features.fma);
+    println!("  NEON: {}", features.neon);
+    println!("  Best SIMD width: {} floats", features.best_simd_width());
+    println!("  Summary: {}", features.describe());
+    println!();
+    println!("=== Compile-time Features ===");
+    #[cfg(feature = "simd")]
+    println!("  simd: enabled (wide crate)");
+    #[cfg(not(feature = "simd"))]
+    println!("  simd: disabled");
+    #[cfg(feature = "parallel")]
+    println!("  parallel: enabled (rayon)");
+    #[cfg(not(feature = "parallel"))]
+    println!("  parallel: disabled");
+}
+
+// =============================================================================
+// Optimized Kernel Re-exports (Phase 3 Memory Optimizations)
+// =============================================================================
+//
+// These functions use bounds check elimination, memory prefetching, and
+// cache-aligned operations for maximum performance.
+//
+// Use these in performance-critical code paths after verifying input sizes.
+
+pub use optimized::{
+    // Optimized matrix operations
+    matmul_vec_optimized,
+    weighted_sum_rows_optimized,
+    // Optimized normalization
+    rmsnorm_optimized,
+    softmax_optimized,
+    softmax_view_optimized,
+    // Optimized activations
+    silu_optimized,
+    silu_optimized_into,
+    // Optimized attention
+    compute_attention_scores_optimized,
+    fused_attention_optimized,
+    // Optimized fused operations
+    fused_swiglu_optimized,
+    // Optimized RoPE
+    apply_rope_optimized,
+};

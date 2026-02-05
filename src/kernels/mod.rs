@@ -16,11 +16,33 @@ pub mod dispatch;
 // Optimized kernels with bounds check elimination and prefetching
 pub mod optimized;
 
+// GPU backends
+#[cfg(feature = "cuda")]
+pub mod cuda;
+
+#[cfg(feature = "rocm")]
+pub mod rocm;
+
+#[cfg(feature = "metal-gpu")]
+pub mod metal;
+
 #[cfg(test)]
 mod tests;
 
 // Re-export backend types for convenient access
 pub use backend::{Backend, BackendPreference, CpuBackend, KernelBackend, init_backend, default_backend};
+
+// Re-export CUDA backend types when the feature is enabled
+#[cfg(feature = "cuda")]
+pub use cuda::{CudaBackend, CudaTensor, CudaMemoryPool};
+
+// Re-export ROCm backend types when the feature is enabled
+#[cfg(feature = "rocm")]
+pub use rocm::{RocmBackend, RocmTensor, RocmMemoryPool};
+
+// Re-export Metal backend types when the feature is enabled
+#[cfg(feature = "metal-gpu")]
+pub use metal::{MetalBackend, MetalTensor, MetalMemoryPool};
 
 // Re-export dispatch types for runtime CPU feature detection
 pub use dispatch::{

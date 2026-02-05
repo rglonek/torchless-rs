@@ -272,72 +272,34 @@ impl KernelBackend for CpuBackend {
 }
 
 // =============================================================================
-// CUDA Backend (placeholder for future implementation)
+// CUDA Backend
 // =============================================================================
 
+// The CUDA backend is implemented in a separate module for cleaner organization.
+// Re-export the CudaBackend type for use in this module.
 #[cfg(feature = "cuda")]
-pub mod cuda {
-    use super::*;
+pub use super::cuda::CudaBackend;
 
-    /// CUDA backend for NVIDIA GPUs.
-    #[derive(Debug)]
-    pub struct CudaBackend {
-        // device: cudarc::driver::CudaDevice,
-        // stream: cudarc::driver::CudaStream,
-        // cublas: cudarc::cublas::CublasHandle,
-    }
-
-    impl CudaBackend {
-        /// Check if CUDA is available on this system.
-        pub fn is_available() -> bool {
-            // TODO: Implement CUDA availability check
-            false
-        }
-
-        /// Create a new CUDA backend.
-        pub fn new() -> anyhow::Result<Self> {
-            anyhow::bail!("CUDA backend not yet implemented")
-        }
-    }
-}
+// The ROCm backend is implemented in a separate module for AMD GPU support.
+// Re-export the RocmBackend type for use in this module.
+#[cfg(feature = "rocm")]
+pub use super::rocm::RocmBackend;
 
 // =============================================================================
-// Metal Backend (placeholder for future implementation)
+// ROCm Backend
 // =============================================================================
 
+// The ROCm backend is implemented in a separate module (super::rocm).
+// It provides GPU acceleration for AMD GPUs using the HIP runtime and rocBLAS.
+
+// =============================================================================
+// Metal Backend
+// =============================================================================
+
+// The Metal backend is implemented in a separate module for Apple Silicon GPU support.
+// Re-export the MetalBackend type for use in this module.
 #[cfg(feature = "metal-gpu")]
-pub mod metal {
-    use super::*;
-
-    /// Metal backend for Apple Silicon GPUs.
-    #[derive(Debug)]
-    pub struct MetalBackend {
-        // device: metal::Device,
-        // queue: metal::CommandQueue,
-        // library: metal::Library,
-    }
-
-    impl MetalBackend {
-        /// Check if Metal is available on this system.
-        pub fn is_available() -> bool {
-            // TODO: Implement Metal availability check
-            #[cfg(target_os = "macos")]
-            {
-                // Would check for Metal support
-                false
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                false
-            }
-        }
-
-        /// Create a new Metal backend.
-        pub fn new() -> anyhow::Result<Self> {
-            anyhow::bail!("Metal backend not yet implemented")
-        }
-    }
-}
+pub use super::metal::MetalBackend;
 
 // =============================================================================
 // OpenCL Backend (placeholder for future implementation)
@@ -385,6 +347,9 @@ pub enum BackendPreference {
     /// Prefer CUDA (NVIDIA GPU).
     #[cfg(feature = "cuda")]
     Cuda,
+    /// Prefer ROCm (AMD GPU).
+    #[cfg(feature = "rocm")]
+    Rocm,
     /// Prefer Metal (Apple Silicon GPU).
     #[cfg(feature = "metal-gpu")]
     Metal,
@@ -398,9 +363,11 @@ pub enum BackendPreference {
 pub enum Backend {
     Cpu(CpuBackend),
     #[cfg(feature = "cuda")]
-    Cuda(cuda::CudaBackend),
+    Cuda(CudaBackend),
+    #[cfg(feature = "rocm")]
+    Rocm(RocmBackend),
     #[cfg(feature = "metal-gpu")]
-    Metal(metal::MetalBackend),
+    Metal(MetalBackend),
     #[cfg(feature = "opencl")]
     OpenCL(opencl::OpenCLBackend),
 }
@@ -412,6 +379,8 @@ impl Backend {
             Backend::Cpu(b) => b.name(),
             #[cfg(feature = "cuda")]
             Backend::Cuda(_) => "cuda",
+            #[cfg(feature = "rocm")]
+            Backend::Rocm(_) => "rocm",
             #[cfg(feature = "metal-gpu")]
             Backend::Metal(_) => "metal",
             #[cfg(feature = "opencl")]
@@ -424,6 +393,24 @@ impl Backend {
         match self {
             Backend::Cpu(b) => Some(b),
             #[allow(unreachable_patterns)]
+            _ => None,
+        }
+    }
+
+    /// Get a reference to the ROCm backend if this is a ROCm backend.
+    #[cfg(feature = "rocm")]
+    pub fn as_rocm(&self) -> Option<&RocmBackend> {
+        match self {
+            Backend::Rocm(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    /// Get a reference to the Metal backend if this is a Metal backend.
+    #[cfg(feature = "metal-gpu")]
+    pub fn as_metal(&self) -> Option<&MetalBackend> {
+        match self {
+            Backend::Metal(b) => Some(b),
             _ => None,
         }
     }
@@ -446,9 +433,11 @@ impl KernelBackend for Backend {
         match self {
             Backend::Cpu(b) => b.matmul_vec(w, x),
             #[cfg(feature = "cuda")]
-            Backend::Cuda(_) => unimplemented!("CUDA matmul_vec"),
+            Backend::Cuda(b) => b.matmul_vec(w, x),
+            #[cfg(feature = "rocm")]
+            Backend::Rocm(b) => b.matmul_vec(w, x),
             #[cfg(feature = "metal-gpu")]
-            Backend::Metal(_) => unimplemented!("Metal matmul_vec"),
+            Backend::Metal(b) => b.matmul_vec(w, x),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(_) => unimplemented!("OpenCL matmul_vec"),
         }
@@ -458,9 +447,11 @@ impl KernelBackend for Backend {
         match self {
             Backend::Cpu(b) => b.matmul_vec_into(w, x, out),
             #[cfg(feature = "cuda")]
-            Backend::Cuda(_) => unimplemented!("CUDA matmul_vec_into"),
+            Backend::Cuda(b) => b.matmul_vec_into(w, x, out),
+            #[cfg(feature = "rocm")]
+            Backend::Rocm(b) => b.matmul_vec_into(w, x, out),
             #[cfg(feature = "metal-gpu")]
-            Backend::Metal(_) => unimplemented!("Metal matmul_vec_into"),
+            Backend::Metal(b) => b.matmul_vec_into(w, x, out),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(_) => unimplemented!("OpenCL matmul_vec_into"),
         }
@@ -470,9 +461,11 @@ impl KernelBackend for Backend {
         match self {
             Backend::Cpu(b_end) => b_end.matmul(a, b),
             #[cfg(feature = "cuda")]
-            Backend::Cuda(_) => unimplemented!("CUDA matmul"),
+            Backend::Cuda(b_end) => b_end.matmul(a, b),
+            #[cfg(feature = "rocm")]
+            Backend::Rocm(b_end) => b_end.matmul(a, b),
             #[cfg(feature = "metal-gpu")]
-            Backend::Metal(_) => unimplemented!("Metal matmul"),
+            Backend::Metal(b_end) => b_end.matmul(a, b),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(_) => unimplemented!("OpenCL matmul"),
         }
@@ -482,9 +475,11 @@ impl KernelBackend for Backend {
         match self {
             Backend::Cpu(b) => b.rmsnorm(x, weight, eps),
             #[cfg(feature = "cuda")]
-            Backend::Cuda(_) => unimplemented!("CUDA rmsnorm"),
+            Backend::Cuda(b) => b.rmsnorm(x, weight, eps),
+            #[cfg(feature = "rocm")]
+            Backend::Rocm(b) => b.rmsnorm(x, weight, eps),
             #[cfg(feature = "metal-gpu")]
-            Backend::Metal(_) => unimplemented!("Metal rmsnorm"),
+            Backend::Metal(b) => b.rmsnorm(x, weight, eps),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(_) => unimplemented!("OpenCL rmsnorm"),
         }
@@ -494,9 +489,11 @@ impl KernelBackend for Backend {
         match self {
             Backend::Cpu(b) => b.softmax(x),
             #[cfg(feature = "cuda")]
-            Backend::Cuda(_) => unimplemented!("CUDA softmax"),
+            Backend::Cuda(b) => b.softmax(x),
+            #[cfg(feature = "rocm")]
+            Backend::Rocm(b) => b.softmax(x),
             #[cfg(feature = "metal-gpu")]
-            Backend::Metal(_) => unimplemented!("Metal softmax"),
+            Backend::Metal(b) => b.softmax(x),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(_) => unimplemented!("OpenCL softmax"),
         }
@@ -506,9 +503,11 @@ impl KernelBackend for Backend {
         match self {
             Backend::Cpu(b) => b.softmax_view(x),
             #[cfg(feature = "cuda")]
-            Backend::Cuda(_) => unimplemented!("CUDA softmax_view"),
+            Backend::Cuda(b) => b.softmax_view(x),
+            #[cfg(feature = "rocm")]
+            Backend::Rocm(b) => b.softmax_view(x),
             #[cfg(feature = "metal-gpu")]
-            Backend::Metal(_) => unimplemented!("Metal softmax_view"),
+            Backend::Metal(b) => b.softmax_view(x),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(_) => unimplemented!("OpenCL softmax_view"),
         }
@@ -518,9 +517,11 @@ impl KernelBackend for Backend {
         match self {
             Backend::Cpu(b) => b.silu(x),
             #[cfg(feature = "cuda")]
-            Backend::Cuda(_) => unimplemented!("CUDA silu"),
+            Backend::Cuda(b) => b.silu(x),
+            #[cfg(feature = "rocm")]
+            Backend::Rocm(b) => b.silu(x),
             #[cfg(feature = "metal-gpu")]
-            Backend::Metal(_) => unimplemented!("Metal silu"),
+            Backend::Metal(b) => b.silu(x),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(_) => unimplemented!("OpenCL silu"),
         }
@@ -530,9 +531,11 @@ impl KernelBackend for Backend {
         match self {
             Backend::Cpu(b) => b.apply_rope(x, cos, sin),
             #[cfg(feature = "cuda")]
-            Backend::Cuda(_) => unimplemented!("CUDA apply_rope"),
+            Backend::Cuda(b) => b.apply_rope(x, cos, sin),
+            #[cfg(feature = "rocm")]
+            Backend::Rocm(b) => b.apply_rope(x, cos, sin),
             #[cfg(feature = "metal-gpu")]
-            Backend::Metal(_) => unimplemented!("Metal apply_rope"),
+            Backend::Metal(b) => b.apply_rope(x, cos, sin),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(_) => unimplemented!("OpenCL apply_rope"),
         }
@@ -548,9 +551,11 @@ impl KernelBackend for Backend {
         match self {
             Backend::Cpu(b) => b.compute_attention_scores(query, keys, scores, scale),
             #[cfg(feature = "cuda")]
-            Backend::Cuda(_) => unimplemented!("CUDA compute_attention_scores"),
+            Backend::Cuda(b) => b.compute_attention_scores(query, keys, scores, scale),
+            #[cfg(feature = "rocm")]
+            Backend::Rocm(b) => b.compute_attention_scores(query, keys, scores, scale),
             #[cfg(feature = "metal-gpu")]
-            Backend::Metal(_) => unimplemented!("Metal compute_attention_scores"),
+            Backend::Metal(b) => b.compute_attention_scores(query, keys, scores, scale),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(_) => unimplemented!("OpenCL compute_attention_scores"),
         }
@@ -565,9 +570,11 @@ impl KernelBackend for Backend {
         match self {
             Backend::Cpu(b) => b.weighted_sum_rows(weights, matrix, out),
             #[cfg(feature = "cuda")]
-            Backend::Cuda(_) => unimplemented!("CUDA weighted_sum_rows"),
+            Backend::Cuda(b) => b.weighted_sum_rows(weights, matrix, out),
+            #[cfg(feature = "rocm")]
+            Backend::Rocm(b) => b.weighted_sum_rows(weights, matrix, out),
             #[cfg(feature = "metal-gpu")]
-            Backend::Metal(_) => unimplemented!("Metal weighted_sum_rows"),
+            Backend::Metal(b) => b.weighted_sum_rows(weights, matrix, out),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(_) => unimplemented!("OpenCL weighted_sum_rows"),
         }
@@ -594,17 +601,26 @@ pub fn init_backend(preference: BackendPreference) -> anyhow::Result<Backend> {
             // Try GPU backends in order of preference
             #[cfg(feature = "cuda")]
             {
-                if cuda::CudaBackend::is_available() {
-                    if let Ok(backend) = cuda::CudaBackend::new() {
+                if CudaBackend::is_available() {
+                    if let Ok(backend) = CudaBackend::new() {
                         return Ok(Backend::Cuda(backend));
+                    }
+                }
+            }
+
+            #[cfg(feature = "rocm")]
+            {
+                if RocmBackend::is_available() {
+                    if let Ok(backend) = RocmBackend::new() {
+                        return Ok(Backend::Rocm(backend));
                     }
                 }
             }
 
             #[cfg(feature = "metal-gpu")]
             {
-                if metal::MetalBackend::is_available() {
-                    if let Ok(backend) = metal::MetalBackend::new() {
+                if MetalBackend::is_available() {
+                    if let Ok(backend) = MetalBackend::new() {
                         return Ok(Backend::Metal(backend));
                     }
                 }
@@ -624,9 +640,11 @@ pub fn init_backend(preference: BackendPreference) -> anyhow::Result<Backend> {
         }
         BackendPreference::Cpu => Ok(Backend::Cpu(CpuBackend::new())),
         #[cfg(feature = "cuda")]
-        BackendPreference::Cuda => Ok(Backend::Cuda(cuda::CudaBackend::new()?)),
+        BackendPreference::Cuda => Ok(Backend::Cuda(CudaBackend::new()?)),
+        #[cfg(feature = "rocm")]
+        BackendPreference::Rocm => Ok(Backend::Rocm(RocmBackend::new()?)),
         #[cfg(feature = "metal-gpu")]
-        BackendPreference::Metal => Ok(Backend::Metal(metal::MetalBackend::new()?)),
+        BackendPreference::Metal => Ok(Backend::Metal(MetalBackend::new()?)),
         #[cfg(feature = "opencl")]
         BackendPreference::OpenCL => Ok(Backend::OpenCL(opencl::OpenCLBackend::new()?)),
     }

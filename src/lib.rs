@@ -28,6 +28,37 @@ pub use kernels::backend::{
     init_backend, default_backend,
 };
 
+// CUDA backend (Phase 5)
+#[cfg(feature = "cuda")]
+pub use kernels::cuda::{
+    CudaBackend, CudaTensor, CudaMemoryPool,
+    memory::{MemoryPoolStats, PinnedBuffer, estimate_model_memory_mb, estimate_kv_cache_memory_mb},
+};
+
+// ROCm backend (Phase 5) - AMD GPU support
+#[cfg(feature = "rocm")]
+pub use kernels::rocm::{
+    RocmBackend, RocmTensor, RocmMemoryPool,
+    memory::{
+        MemoryPoolStats as RocmMemoryPoolStats,
+        PinnedBuffer as RocmPinnedBuffer,
+        estimate_model_memory_mb as rocm_estimate_model_memory_mb,
+        estimate_kv_cache_memory_mb as rocm_estimate_kv_cache_memory_mb,
+    },
+};
+
+// Metal backend (Phase 5) - Apple Silicon GPU support
+#[cfg(feature = "metal-gpu")]
+pub use kernels::metal::{
+    MetalBackend, MetalTensor, MetalMemoryPool,
+    memory::{
+        MetalMemoryPoolStats,
+        estimate_model_memory_mb as metal_estimate_model_memory_mb,
+        estimate_kv_cache_memory_mb as metal_estimate_kv_cache_memory_mb,
+        get_device_memory_size as metal_get_device_memory_size,
+    },
+};
+
 // Tensor storage abstraction (Phase 1 foundation)
 pub use tensor::{
     Device, Dtype, TensorStorage, UnifiedTensor, DeviceTransfer,

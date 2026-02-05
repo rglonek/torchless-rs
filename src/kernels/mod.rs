@@ -26,6 +26,9 @@ pub mod rocm;
 #[cfg(feature = "metal-gpu")]
 pub mod metal;
 
+#[cfg(feature = "opencl")]
+pub mod opencl;
+
 #[cfg(test)]
 mod tests;
 
@@ -43,6 +46,10 @@ pub use rocm::{RocmBackend, RocmTensor, RocmMemoryPool};
 // Re-export Metal backend types when the feature is enabled
 #[cfg(feature = "metal-gpu")]
 pub use metal::{MetalBackend, MetalTensor, MetalMemoryPool};
+
+// Re-export OpenCL backend types when the feature is enabled
+#[cfg(feature = "opencl")]
+pub use opencl::{OpenCLBackend, OpenCLTensor, OpenCLMemoryPool};
 
 // Re-export dispatch types for runtime CPU feature detection
 pub use dispatch::{

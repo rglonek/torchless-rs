@@ -302,35 +302,13 @@ pub use super::rocm::RocmBackend;
 pub use super::metal::MetalBackend;
 
 // =============================================================================
-// OpenCL Backend (placeholder for future implementation)
+// OpenCL Backend
 // =============================================================================
 
+// The OpenCL backend is implemented in a separate module for cross-platform GPU support.
+// Re-export the OpenCLBackend type for use in this module.
 #[cfg(feature = "opencl")]
-pub mod opencl {
-    use super::*;
-
-    /// OpenCL backend for cross-platform GPU support.
-    #[derive(Debug)]
-    pub struct OpenCLBackend {
-        // platform: ocl::Platform,
-        // device: ocl::Device,
-        // context: ocl::Context,
-        // queue: ocl::Queue,
-    }
-
-    impl OpenCLBackend {
-        /// Check if OpenCL is available on this system.
-        pub fn is_available() -> bool {
-            // TODO: Implement OpenCL availability check
-            false
-        }
-
-        /// Create a new OpenCL backend.
-        pub fn new() -> anyhow::Result<Self> {
-            anyhow::bail!("OpenCL backend not yet implemented")
-        }
-    }
-}
+pub use super::opencl::OpenCLBackend;
 
 // =============================================================================
 // Backend Selection
@@ -369,7 +347,7 @@ pub enum Backend {
     #[cfg(feature = "metal-gpu")]
     Metal(MetalBackend),
     #[cfg(feature = "opencl")]
-    OpenCL(opencl::OpenCLBackend),
+    OpenCL(OpenCLBackend),
 }
 
 impl Backend {
@@ -414,6 +392,15 @@ impl Backend {
             _ => None,
         }
     }
+
+    /// Get a reference to the OpenCL backend if this is an OpenCL backend.
+    #[cfg(feature = "opencl")]
+    pub fn as_opencl(&self) -> Option<&OpenCLBackend> {
+        match self {
+            Backend::OpenCL(b) => Some(b),
+            _ => None,
+        }
+    }
 }
 
 // Implement KernelBackend for Backend enum to allow dynamic dispatch
@@ -439,7 +426,7 @@ impl KernelBackend for Backend {
             #[cfg(feature = "metal-gpu")]
             Backend::Metal(b) => b.matmul_vec(w, x),
             #[cfg(feature = "opencl")]
-            Backend::OpenCL(_) => unimplemented!("OpenCL matmul_vec"),
+            Backend::OpenCL(b) => b.matmul_vec(w, x),
         }
     }
 
@@ -453,7 +440,7 @@ impl KernelBackend for Backend {
             #[cfg(feature = "metal-gpu")]
             Backend::Metal(b) => b.matmul_vec_into(w, x, out),
             #[cfg(feature = "opencl")]
-            Backend::OpenCL(_) => unimplemented!("OpenCL matmul_vec_into"),
+            Backend::OpenCL(b) => b.matmul_vec_into(w, x, out),
         }
     }
 
@@ -467,7 +454,7 @@ impl KernelBackend for Backend {
             #[cfg(feature = "metal-gpu")]
             Backend::Metal(b_end) => b_end.matmul(a, b),
             #[cfg(feature = "opencl")]
-            Backend::OpenCL(_) => unimplemented!("OpenCL matmul"),
+            Backend::OpenCL(b_end) => b_end.matmul(a, b),
         }
     }
 
@@ -481,7 +468,7 @@ impl KernelBackend for Backend {
             #[cfg(feature = "metal-gpu")]
             Backend::Metal(b) => b.rmsnorm(x, weight, eps),
             #[cfg(feature = "opencl")]
-            Backend::OpenCL(_) => unimplemented!("OpenCL rmsnorm"),
+            Backend::OpenCL(b) => b.rmsnorm(x, weight, eps),
         }
     }
 
@@ -495,7 +482,7 @@ impl KernelBackend for Backend {
             #[cfg(feature = "metal-gpu")]
             Backend::Metal(b) => b.softmax(x),
             #[cfg(feature = "opencl")]
-            Backend::OpenCL(_) => unimplemented!("OpenCL softmax"),
+            Backend::OpenCL(b) => b.softmax(x),
         }
     }
 
@@ -509,7 +496,7 @@ impl KernelBackend for Backend {
             #[cfg(feature = "metal-gpu")]
             Backend::Metal(b) => b.softmax_view(x),
             #[cfg(feature = "opencl")]
-            Backend::OpenCL(_) => unimplemented!("OpenCL softmax_view"),
+            Backend::OpenCL(b) => b.softmax_view(x),
         }
     }
 
@@ -523,7 +510,7 @@ impl KernelBackend for Backend {
             #[cfg(feature = "metal-gpu")]
             Backend::Metal(b) => b.silu(x),
             #[cfg(feature = "opencl")]
-            Backend::OpenCL(_) => unimplemented!("OpenCL silu"),
+            Backend::OpenCL(b) => b.silu(x),
         }
     }
 
@@ -537,7 +524,7 @@ impl KernelBackend for Backend {
             #[cfg(feature = "metal-gpu")]
             Backend::Metal(b) => b.apply_rope(x, cos, sin),
             #[cfg(feature = "opencl")]
-            Backend::OpenCL(_) => unimplemented!("OpenCL apply_rope"),
+            Backend::OpenCL(b) => b.apply_rope(x, cos, sin),
         }
     }
 
@@ -557,7 +544,7 @@ impl KernelBackend for Backend {
             #[cfg(feature = "metal-gpu")]
             Backend::Metal(b) => b.compute_attention_scores(query, keys, scores, scale),
             #[cfg(feature = "opencl")]
-            Backend::OpenCL(_) => unimplemented!("OpenCL compute_attention_scores"),
+            Backend::OpenCL(b) => b.compute_attention_scores(query, keys, scores, scale),
         }
     }
 
@@ -576,7 +563,7 @@ impl KernelBackend for Backend {
             #[cfg(feature = "metal-gpu")]
             Backend::Metal(b) => b.weighted_sum_rows(weights, matrix, out),
             #[cfg(feature = "opencl")]
-            Backend::OpenCL(_) => unimplemented!("OpenCL weighted_sum_rows"),
+            Backend::OpenCL(b) => b.weighted_sum_rows(weights, matrix, out),
         }
     }
 }
@@ -628,8 +615,8 @@ pub fn init_backend(preference: BackendPreference) -> anyhow::Result<Backend> {
 
             #[cfg(feature = "opencl")]
             {
-                if opencl::OpenCLBackend::is_available() {
-                    if let Ok(backend) = opencl::OpenCLBackend::new() {
+                if OpenCLBackend::is_available() {
+                    if let Ok(backend) = OpenCLBackend::new() {
                         return Ok(Backend::OpenCL(backend));
                     }
                 }
@@ -646,7 +633,7 @@ pub fn init_backend(preference: BackendPreference) -> anyhow::Result<Backend> {
         #[cfg(feature = "metal-gpu")]
         BackendPreference::Metal => Ok(Backend::Metal(MetalBackend::new()?)),
         #[cfg(feature = "opencl")]
-        BackendPreference::OpenCL => Ok(Backend::OpenCL(opencl::OpenCLBackend::new()?)),
+        BackendPreference::OpenCL => Ok(Backend::OpenCL(OpenCLBackend::new()?)),
     }
 }
 

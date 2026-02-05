@@ -1,6 +1,9 @@
 use super::super::InferenceState;
 use crate::kernels;
-use ndarray::{s, Array1, Array2};
+use ndarray::{s, Array2};
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Multi-head attention with grouped-query attention (GQA)
 pub struct Attention {
@@ -29,24 +32,33 @@ impl Attention {
     }
 
     /// Forward pass: multi-head attention with GQA
+    ///
+    /// Optimized to minimize allocations:
+    /// - Uses pre-allocated flat buffers for Q, K, V projections
+    /// - Uses pre-allocated scores buffer from InferenceState
+    /// - Uses views into KV cache instead of cloning
+    /// - Uses pre-allocated context_flat buffer for output projection
     pub fn forward(&self, state: &mut InferenceState) {
         let head_dim = state.config.hidden_size / state.config.n_heads;
 
-        // Project to Q, K, V
-        let q_flat = kernels::matmul_vec(&self.q_proj, &state.hidden_state);
-        let k_flat = kernels::matmul_vec(&self.k_proj, &state.hidden_state);
-        let v_flat = kernels::matmul_vec(&self.v_proj, &state.hidden_state);
+        // Project to Q, K, V using pre-allocated flat buffers (no allocation)
+        kernels::matmul_vec_into(&self.q_proj, &state.hidden_state, &mut state.q_flat);
+        kernels::matmul_vec_into(&self.k_proj, &state.hidden_state, &mut state.k_flat);
+        kernels::matmul_vec_into(&self.v_proj, &state.hidden_state, &mut state.v_flat);
 
-        // Reshape to [n_heads, head_dim] and [n_kv_heads, head_dim]
-        state.q_state = q_flat
-            .into_shape_with_order((state.config.n_heads, head_dim))
-            .unwrap();
-        state.k_state = k_flat
-            .into_shape_with_order((state.config.n_kv_heads, head_dim))
-            .unwrap();
-        state.v_state = v_flat
-            .into_shape_with_order((state.config.n_kv_heads, head_dim))
-            .unwrap();
+        // Copy flat buffers into shaped state arrays
+        // (This avoids the allocation of into_shape_with_order which takes ownership)
+        for h in 0..state.config.n_heads {
+            for d in 0..head_dim {
+                state.q_state[[h, d]] = state.q_flat[h * head_dim + d];
+            }
+        }
+        for h in 0..state.config.n_kv_heads {
+            for d in 0..head_dim {
+                state.k_state[[h, d]] = state.k_flat[h * head_dim + d];
+                state.v_state[[h, d]] = state.v_flat[h * head_dim + d];
+            }
+        }
 
         // Generate RoPE embeddings for current position
         let (cos, sin) = kernels::rope_embeddings(&state.inv_freq, state.pos);
@@ -63,6 +75,7 @@ impl Attention {
         // Perform attention: for each query head, attend to corresponding KV head
         // GQA: multiple query heads share the same KV head
         let kv_groups = state.config.n_heads / state.config.n_kv_heads;
+        let scale = 1.0 / (head_dim as f32).sqrt();
 
         // Zero out context
         state.context.fill(0.0);
@@ -71,57 +84,160 @@ impl Attention {
             let kv_head = h / kv_groups;
             let seq_len = state.pos + 1;
 
-            // Get query for this head: [head_dim]
+            // Get query for this head: [head_dim] (view, no allocation)
             let q_head = state.q_state.row(h);
 
-            // Get K cache for this KV head up to current position: [seq_len, head_dim]
-            let k_cache_slice = state
+            // Get K cache view for this KV head up to current position: [seq_len, head_dim]
+            // Use view directly instead of cloning with to_owned()
+            let k_cache_view = state
                 .k_cache
                 .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
-            let k_head = k_cache_slice
-                .to_owned()
-                .into_shape_with_order((seq_len, head_dim))
-                .unwrap();
 
-            // Compute attention scores: K @ Q
-            let mut scores = Array1::zeros(seq_len);
-            for i in 0..seq_len {
-                scores[i] = k_head.row(i).dot(&q_head);
+            // Compute attention scores directly into pre-allocated scores buffer
+            // Use the h-th row of the scores matrix, sliced to seq_len
+            {
+                let mut scores_slice = state.scores.slice_mut(s![h, ..seq_len]);
+                kernels::compute_attention_scores(q_head, k_cache_view, &mut scores_slice, scale);
+
+                // Softmax in-place (use view variant to avoid allocation)
+                kernels::softmax_view(&mut scores_slice);
             }
 
-            // Scale by 1/sqrt(head_dim)
-            let scale = 1.0 / (head_dim as f32).sqrt();
-            scores.mapv_inplace(|v| v * scale);
-
-            // Softmax
-            kernels::softmax(&mut scores);
-
-            // Get V cache for this KV head: [seq_len, head_dim]
-            let v_cache_slice = state
+            // Get V cache view for this KV head: [seq_len, head_dim] (view, no allocation)
+            let v_cache_view = state
                 .v_cache
                 .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
-            let v_head = v_cache_slice
-                .to_owned()
-                .into_shape_with_order((seq_len, head_dim))
-                .unwrap();
 
-            // Weighted sum: scores @ V
-            let context_head = kernels::row_matmul(&scores, &v_head);
+            // Compute weighted sum directly into context[h, :] (no allocation)
+            let scores_view = state.scores.slice(s![h, ..seq_len]);
+            let mut context_row = state.context.slice_mut(s![h, ..]);
+            kernels::weighted_sum_rows(scores_view, v_cache_view, &mut context_row);
+        }
 
-            // Store in context[h, :]
+        // Flatten context into pre-allocated context_flat buffer (no clone)
+        for h in 0..state.config.n_heads {
             for d in 0..head_dim {
-                state.context[[h, d]] = context_head[d];
+                state.context_flat[h * head_dim + d] = state.context[[h, d]];
             }
         }
 
-        // Flatten context and apply output projection
-        let context_flat = state
-            .context
-            .clone()
-            .into_shape_with_order(state.config.hidden_size)
-            .unwrap();
-        state
-            .hidden_state
-            .assign(&kernels::matmul_vec(&self.o_proj, &context_flat));
+        // Apply output projection
+        kernels::matmul_vec_into(&self.o_proj, &state.context_flat, &mut state.hidden_state);
+    }
+
+    /// Parallel forward pass: multi-head attention with GQA
+    ///
+    /// Parallelizes attention computation across heads using Rayon.
+    /// Each head's computation is independent, allowing for parallel execution.
+    #[cfg(feature = "parallel")]
+    pub fn forward_parallel(&self, state: &mut InferenceState) {
+        let head_dim = state.config.hidden_size / state.config.n_heads;
+        let n_heads = state.config.n_heads;
+        let n_kv_heads = state.config.n_kv_heads;
+        let kv_groups = n_heads / n_kv_heads;
+        let scale = 1.0 / (head_dim as f32).sqrt();
+        let seq_len = state.pos + 1;
+
+        // Project to Q, K, V using parallel matmul
+        kernels::fast_matmul_vec_into(&self.q_proj, &state.hidden_state, &mut state.q_flat);
+        kernels::fast_matmul_vec_into(&self.k_proj, &state.hidden_state, &mut state.k_flat);
+        kernels::fast_matmul_vec_into(&self.v_proj, &state.hidden_state, &mut state.v_flat);
+
+        // Copy flat buffers into shaped state arrays
+        for h in 0..n_heads {
+            for d in 0..head_dim {
+                state.q_state[[h, d]] = state.q_flat[h * head_dim + d];
+            }
+        }
+        for h in 0..n_kv_heads {
+            for d in 0..head_dim {
+                state.k_state[[h, d]] = state.k_flat[h * head_dim + d];
+                state.v_state[[h, d]] = state.v_flat[h * head_dim + d];
+            }
+        }
+
+        // Generate RoPE embeddings for current position
+        let (cos, sin) = kernels::rope_embeddings(&state.inv_freq, state.pos);
+        state.cos.assign(&cos);
+        state.sin.assign(&sin);
+
+        // Apply RoPE to Q and K
+        kernels::apply_rope(&mut state.q_state, &state.cos, &state.sin);
+        kernels::apply_rope(&mut state.k_state, &state.cos, &state.sin);
+
+        // Push K, V to cache
+        state.push_kv(self.layer_idx);
+
+        // Parallel attention computation across heads
+        // We collect the head computations and then assign to avoid borrow issues
+        let head_results: Vec<(usize, Vec<f32>)> = (0..n_heads)
+            .into_par_iter()
+            .map(|h| {
+                let kv_head = h / kv_groups;
+
+                // Get query for this head
+                let q_head: Vec<f32> = (0..head_dim).map(|d| state.q_state[[h, d]]).collect();
+
+                // Compute attention scores: scores[i] = k_cache[i].dot(q) * scale
+                let mut scores = vec![0.0f32; seq_len];
+                for i in 0..seq_len {
+                    let mut dot = 0.0f32;
+                    for d in 0..head_dim {
+                        dot += state.k_cache[[self.layer_idx, kv_head, i, d]] * q_head[d];
+                    }
+                    scores[i] = dot * scale;
+                }
+
+                // Softmax
+                let max = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                let mut sum = 0.0f32;
+                for s in &mut scores {
+                    *s = (*s - max).exp();
+                    sum += *s;
+                }
+                for s in &mut scores {
+                    *s /= sum;
+                }
+
+                // Compute weighted sum: context[d] = sum_i(scores[i] * v_cache[i, d])
+                let mut context = vec![0.0f32; head_dim];
+                for i in 0..seq_len {
+                    let w = scores[i];
+                    for d in 0..head_dim {
+                        context[d] += w * state.v_cache[[self.layer_idx, kv_head, i, d]];
+                    }
+                }
+
+                (h, context)
+            })
+            .collect();
+
+        // Copy results back to state
+        for (h, context) in head_results {
+            for d in 0..head_dim {
+                state.context[[h, d]] = context[d];
+            }
+        }
+
+        // Flatten context into pre-allocated context_flat buffer
+        for h in 0..n_heads {
+            for d in 0..head_dim {
+                state.context_flat[h * head_dim + d] = state.context[[h, d]];
+            }
+        }
+
+        // Apply output projection with parallel matmul
+        kernels::fast_matmul_vec_into(&self.o_proj, &state.context_flat, &mut state.hidden_state);
+    }
+
+    /// Auto-selecting forward: uses parallel when available
+    #[cfg(feature = "parallel")]
+    pub fn fast_forward(&self, state: &mut InferenceState) {
+        self.forward_parallel(state)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    pub fn fast_forward(&self, state: &mut InferenceState) {
+        self.forward(state)
     }
 }

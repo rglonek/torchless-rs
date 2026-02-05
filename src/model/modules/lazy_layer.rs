@@ -1,20 +1,23 @@
 use super::super::InferenceState;
-use super::{Attention, RMSNorm, MLP};
+use super::{LazyAttention, LazyMLP, RMSNorm};
+use crate::loader::Parameters;
 
-/// Transformer decoder layer
-pub struct Layer {
+/// Lazy transformer decoder layer.
+/// Norm weights are stored eagerly (they're small), but attention and MLP
+/// projections are accessed lazily from the memory-mapped file.
+pub struct LazyLayer {
     pub input_layernorm: RMSNorm,
-    pub self_attn: Attention,
+    pub self_attn: LazyAttention,
     pub post_attention_layernorm: RMSNorm,
-    pub mlp: MLP,
+    pub mlp: LazyMLP,
 }
 
-impl Layer {
+impl LazyLayer {
     pub fn new(
         input_layernorm: RMSNorm,
-        self_attn: Attention,
+        self_attn: LazyAttention,
         post_attention_layernorm: RMSNorm,
-        mlp: MLP,
+        mlp: LazyMLP,
     ) -> Self {
         Self {
             input_layernorm,
@@ -25,7 +28,8 @@ impl Layer {
     }
 
     /// Forward pass: norm -> attention -> residual -> norm -> mlp -> residual
-    pub fn forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool) {
+    /// Uses lazy tensor loading for attention and MLP projections.
+    pub fn forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool, params: &Parameters) {
         if debug && layer_idx % 8 == 0 {
             eprintln!("  Layer {}/{}", layer_idx, state.config.n_layers);
         }
@@ -36,8 +40,8 @@ impl Layer {
         // Pre-attention norm
         self.input_layernorm.forward(state);
 
-        // Self-attention
-        self.self_attn.forward(state);
+        // Self-attention (lazy tensor access)
+        self.self_attn.forward(state, params);
 
         // Residual connection
         state.hidden_state += &state.residual;
@@ -48,15 +52,15 @@ impl Layer {
         // Pre-MLP norm
         self.post_attention_layernorm.forward(state);
 
-        // MLP
-        self.mlp.forward(state);
+        // MLP (lazy tensor access)
+        self.mlp.forward(state, params);
 
         // Residual connection
         state.hidden_state += &state.residual;
     }
 
-    /// Optimized forward pass: uses parallel attention and MLP when available
-    pub fn fast_forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool) {
+    /// Optimized forward pass: uses SIMD and parallel kernels where available.
+    pub fn fast_forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool, params: &Parameters) {
         if debug && layer_idx % 8 == 0 {
             eprintln!("  Layer {}/{}", layer_idx, state.config.n_layers);
         }
@@ -64,11 +68,11 @@ impl Layer {
         // Save residual
         state.residual.assign(&state.hidden_state);
 
-        // Pre-attention norm (uses SIMD when that feature is enabled)
+        // Pre-attention norm (uses SIMD when available)
         self.input_layernorm.fast_forward(state);
 
-        // Self-attention (parallel when feature is enabled)
-        self.self_attn.fast_forward(state);
+        // Self-attention (lazy + optimized)
+        self.self_attn.fast_forward(state, params);
 
         // Residual connection
         state.hidden_state += &state.residual;
@@ -76,11 +80,11 @@ impl Layer {
         // Save residual again
         state.residual.assign(&state.hidden_state);
 
-        // Pre-MLP norm (uses SIMD when that feature is enabled)
+        // Pre-MLP norm (uses SIMD when available)
         self.post_attention_layernorm.fast_forward(state);
 
-        // MLP (parallel when feature is enabled)
-        self.mlp.fast_forward(state);
+        // MLP (lazy + optimized)
+        self.mlp.fast_forward(state, params);
 
         // Residual connection
         state.hidden_state += &state.residual;

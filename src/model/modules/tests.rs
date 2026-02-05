@@ -1,5 +1,5 @@
-use crate::loader::Config;
-use crate::model::{Attention, Embedding, InferenceState, RMSNorm, MLP};
+use crate::loader::{Config, Parameters};
+use crate::model::{Attention, Embedding, InferenceState, LazyMistral, Mistral, RMSNorm, MLP};
 use ndarray::{Array1, Array2};
 
 fn test_config() -> Config {
@@ -174,4 +174,117 @@ fn test_kv_cache_push() {
     // Verify values were copied
     assert_eq!(state.k_cache[[0, 0, 0, 0]], 1.5);
     assert_eq!(state.v_cache[[0, 0, 0, 0]], 2.5);
+}
+
+// =============================================================================
+// Lazy Model Tests
+// =============================================================================
+
+#[test]
+fn test_lazy_mistral_load() {
+    let params = Parameters::load("tests/fixtures/test_model.bin").unwrap();
+    let lazy_model = LazyMistral::load(&params).unwrap();
+
+    // Verify config loaded
+    assert_eq!(lazy_model.config.hidden_size, 32);
+    assert_eq!(lazy_model.config.n_layers, 2);
+
+    // Verify layers created
+    assert_eq!(lazy_model.layers.len(), 2);
+}
+
+#[test]
+fn test_lazy_vs_eager_forward_produces_same_results() {
+    // Load parameters
+    let params = Parameters::load("tests/fixtures/test_model.bin").unwrap();
+
+    // Create eager model (consumes params)
+    let params_for_eager = Parameters::load("tests/fixtures/test_model.bin").unwrap();
+    let eager_model = Mistral::load(params_for_eager).unwrap();
+
+    // Create lazy model (borrows params)
+    let lazy_model = LazyMistral::load(&params).unwrap();
+
+    // Create inference states
+    let mut eager_state = InferenceState::new(eager_model.config.clone());
+    let mut lazy_state = InferenceState::new(lazy_model.config.clone());
+
+    // Run forward pass with same token
+    let token = 1u32;
+    eager_model.forward(&mut eager_state, token, false);
+    lazy_model.forward(&mut lazy_state, token, false);
+
+    // Results should match (within floating point tolerance)
+    for i in 0..lazy_state.logits.len() {
+        let diff = (lazy_state.logits[i] - eager_state.logits[i]).abs();
+        assert!(
+            diff < 1e-4,
+            "Logits mismatch at {}: lazy={}, eager={}, diff={}",
+            i,
+            lazy_state.logits[i],
+            eager_state.logits[i],
+            diff
+        );
+    }
+}
+
+#[test]
+fn test_lazy_model_multiple_tokens() {
+    let params = Parameters::load("tests/fixtures/test_model.bin").unwrap();
+    let lazy_model = LazyMistral::load(&params).unwrap();
+    let mut state = InferenceState::new(lazy_model.config.clone());
+
+    // Process multiple tokens
+    let tokens = [1u32, 5, 10, 15, 20];
+
+    for &token in &tokens {
+        lazy_model.forward(&mut state, token, false);
+        state.pos += 1;
+
+        // Verify state is not all zeros
+        let sum: f32 = state.logits.iter().map(|x| x.abs()).sum();
+        assert!(sum > 0.0, "Logits should be non-zero after forward pass");
+    }
+
+    // Position should have advanced
+    assert_eq!(state.pos, tokens.len());
+}
+
+#[test]
+fn test_lazy_embedding_lookup() {
+    use crate::model::modules::LazyEmbedding;
+
+    let params = Parameters::load("tests/fixtures/test_model.bin").unwrap();
+    let mut state = InferenceState::new(params.config.clone());
+
+    let lazy_embed = LazyEmbedding::new("model.embed_tokens.weight".to_string());
+
+    // Lookup token 0
+    lazy_embed.forward(&mut state, 0, &params);
+    let state0 = state.hidden_state.clone();
+
+    // Lookup different token
+    lazy_embed.forward(&mut state, 10, &params);
+
+    // Should be different
+    assert_ne!(state.hidden_state, state0);
+
+    // Compare with eager embedding
+    let embed_data = params.get_tensor("model.embed_tokens.weight").unwrap();
+    let embed_table = Array2::from_shape_vec((300, 32), embed_data).unwrap();
+    let eager_embed = Embedding::new(embed_table);
+
+    let mut eager_state = InferenceState::new(params.config.clone());
+    eager_embed.forward(&mut eager_state, 10);
+
+    // Should match lazy embedding
+    for i in 0..state.hidden_state.len() {
+        assert!(
+            (state.hidden_state[i] - eager_state.hidden_state[i]).abs() < 1e-6,
+            "Embedding mismatch at {}: lazy={}, eager={}",
+            i,
+            state.hidden_state[i],
+            eager_state.hidden_state[i]
+        );
+    }
 }

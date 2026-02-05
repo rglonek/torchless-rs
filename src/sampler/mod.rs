@@ -52,3 +52,15 @@ pub fn generate(
     model.forward(state, token, debug);
     sample_multinomial(state, temperature)
 }
+
+/// Generate one token using the lazy model (memory-efficient)
+pub fn generate_lazy(
+    model: &crate::LazyMistral,
+    state: &mut InferenceState,
+    token: u32,
+    temperature: f32,
+    debug: bool,
+) -> u32 {
+    model.forward(state, token, debug);
+    sample_multinomial(state, temperature)
+}

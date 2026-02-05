@@ -5,6 +5,6 @@ pub mod sampler;
 pub mod tensor;
 pub mod tokenizer;
 
-pub use loader::{Config, Parameters};
-pub use model::{InferenceState, Mistral};
-pub use sampler::{generate, sample_greedy, sample_multinomial};
+pub use loader::{Config, Parameters, TensorDtype, TensorView};
+pub use model::{InferenceState, LazyMistral, Mistral};
+pub use sampler::{generate, generate_lazy, sample_greedy, sample_multinomial};

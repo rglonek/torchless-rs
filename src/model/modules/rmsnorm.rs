@@ -17,4 +17,9 @@ impl RMSNorm {
     pub fn forward(&self, state: &mut InferenceState) {
         kernels::rmsnorm(&mut state.hidden_state, &self.weight, self.eps);
     }
+
+    /// Optimized forward pass: uses SIMD when available
+    pub fn fast_forward(&self, state: &mut InferenceState) {
+        kernels::fast_rmsnorm(&mut state.hidden_state, &self.weight, self.eps);
+    }
 }

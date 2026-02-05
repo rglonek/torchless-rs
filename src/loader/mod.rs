@@ -5,7 +5,7 @@ mod parameters;
 #[cfg(test)]
 mod tests;
 
-pub use parameters::Parameters;
+pub use parameters::{Parameters, TensorDtype, TensorView};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {

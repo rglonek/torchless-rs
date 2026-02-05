@@ -13,6 +13,29 @@ memmap2 = "0.9"
 byteorder = "1.5"
 rand = "0.8"
 
+# BLAS support (optional)
+blas-src = { version = "0.10", optional = true }
+openblas-src = { version = "0.10", features = ["cblas", "system"], optional = true }
+
+# SIMD support (optional)
+wide = { version = "0.7", optional = true }
+
+# Parallel processing (optional)
+rayon = { version = "1.10", optional = true }
+
+[features]
+default = []
+# OpenBLAS backend - best general Linux performance
+openblas = ["ndarray/blas", "blas-src", "blas-src/openblas", "openblas-src"]
+# BLIS backend - good for AMD CPUs
+blis = ["ndarray/blas", "blas-src", "blas-src/blis"]
+# Accelerate backend - native macOS framework
+accelerate = ["ndarray/blas", "blas-src", "blas-src/accelerate"]
+# SIMD-optimized kernels using portable SIMD
+simd = ["wide"]
+# Parallel processing with Rayon
+parallel = ["rayon", "ndarray/rayon"]
+
 [lib]
 name = "torchless"
 path = "src/lib.rs"
@@ -20,3 +43,18 @@ path = "src/lib.rs"
 [[bin]]
 name = "torchless"
 path = "src/main.rs"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "matmul_bench"
+harness = false
+
+[[bench]]
+name = "attention_bench"
+harness = false
+
+[[bench]]
+name = "e2e_bench"
+harness = false

@@ -642,6 +642,713 @@ pub fn default_backend() -> CpuBackend {
     CpuBackend::new()
 }
 
+// =============================================================================
+// Backend Discovery and Device Enumeration
+// =============================================================================
+
+/// Information about an available backend.
+#[derive(Debug, Clone)]
+pub struct BackendInfo {
+    /// Backend type
+    pub backend_type: BackendType,
+    /// Human-readable name
+    pub name: String,
+    /// Whether the backend is currently available
+    pub available: bool,
+    /// Device information (if available)
+    pub devices: Vec<DeviceInfo>,
+    /// Error message if not available
+    pub error: Option<String>,
+}
+
+/// Type of backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendType {
+    Cpu,
+    Cuda,
+    Rocm,
+    Metal,
+    OpenCL,
+}
+
+impl std::fmt::Display for BackendType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BackendType::Cpu => write!(f, "CPU"),
+            BackendType::Cuda => write!(f, "CUDA"),
+            BackendType::Rocm => write!(f, "ROCm"),
+            BackendType::Metal => write!(f, "Metal"),
+            BackendType::OpenCL => write!(f, "OpenCL"),
+        }
+    }
+}
+
+/// Information about a specific device.
+#[derive(Debug, Clone)]
+pub struct DeviceInfo {
+    /// Device index
+    pub index: usize,
+    /// Device name
+    pub name: String,
+    /// Total memory in bytes
+    pub total_memory: usize,
+    /// Free memory in bytes (if available)
+    pub free_memory: Option<usize>,
+    /// Compute capability or equivalent
+    pub compute_capability: Option<String>,
+    /// Whether unified memory is used
+    pub unified_memory: bool,
+}
+
+impl DeviceInfo {
+    /// Get total memory in GB.
+    pub fn total_memory_gb(&self) -> f64 {
+        self.total_memory as f64 / 1024.0 / 1024.0 / 1024.0
+    }
+
+    /// Get free memory in GB (if available).
+    pub fn free_memory_gb(&self) -> Option<f64> {
+        self.free_memory.map(|m| m as f64 / 1024.0 / 1024.0 / 1024.0)
+    }
+
+    /// Check if device can fit a model of given size.
+    pub fn can_fit(&self, required_bytes: usize) -> bool {
+        if let Some(free) = self.free_memory {
+            free >= required_bytes
+        } else {
+            // If we don't know free memory, assume 80% of total is usable
+            (self.total_memory as f64 * 0.8) as usize >= required_bytes
+        }
+    }
+}
+
+impl std::fmt::Display for DeviceInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}] {}: {:.2} GB", self.index, self.name, self.total_memory_gb())?;
+        if let Some(free_gb) = self.free_memory_gb() {
+            write!(f, " ({:.2} GB free)", free_gb)?;
+        }
+        if let Some(ref cc) = self.compute_capability {
+            write!(f, ", compute {}", cc)?;
+        }
+        if self.unified_memory {
+            write!(f, " (unified memory)")?;
+        }
+        Ok(())
+    }
+}
+
+/// Discover all available backends and their devices.
+pub fn discover_backends() -> Vec<BackendInfo> {
+    let mut backends = Vec::new();
+
+    // CPU is always available
+    backends.push(BackendInfo {
+        backend_type: BackendType::Cpu,
+        name: "CPU".to_string(),
+        available: true,
+        devices: vec![DeviceInfo {
+            index: 0,
+            name: get_cpu_name(),
+            total_memory: get_system_memory(),
+            free_memory: get_available_memory(),
+            compute_capability: None,
+            unified_memory: false,
+        }],
+        error: None,
+    });
+
+    // Check CUDA
+    #[cfg(feature = "cuda")]
+    {
+        backends.push(discover_cuda());
+    }
+    #[cfg(not(feature = "cuda"))]
+    {
+        backends.push(BackendInfo {
+            backend_type: BackendType::Cuda,
+            name: "CUDA".to_string(),
+            available: false,
+            devices: vec![],
+            error: Some("CUDA feature not enabled at compile time".to_string()),
+        });
+    }
+
+    // Check ROCm
+    #[cfg(feature = "rocm")]
+    {
+        backends.push(discover_rocm());
+    }
+    #[cfg(not(feature = "rocm"))]
+    {
+        backends.push(BackendInfo {
+            backend_type: BackendType::Rocm,
+            name: "ROCm".to_string(),
+            available: false,
+            devices: vec![],
+            error: Some("ROCm feature not enabled at compile time".to_string()),
+        });
+    }
+
+    // Check Metal
+    #[cfg(feature = "metal-gpu")]
+    {
+        backends.push(discover_metal());
+    }
+    #[cfg(not(feature = "metal-gpu"))]
+    {
+        backends.push(BackendInfo {
+            backend_type: BackendType::Metal,
+            name: "Metal".to_string(),
+            available: false,
+            devices: vec![],
+            error: Some("Metal feature not enabled at compile time".to_string()),
+        });
+    }
+
+    // Check OpenCL
+    #[cfg(feature = "opencl")]
+    {
+        backends.push(discover_opencl());
+    }
+    #[cfg(not(feature = "opencl"))]
+    {
+        backends.push(BackendInfo {
+            backend_type: BackendType::OpenCL,
+            name: "OpenCL".to_string(),
+            available: false,
+            devices: vec![],
+            error: Some("OpenCL feature not enabled at compile time".to_string()),
+        });
+    }
+
+    backends
+}
+
+/// Get the best available backend based on performance heuristics.
+pub fn best_available_backend() -> BackendType {
+    let backends = discover_backends();
+
+    // Priority: CUDA > ROCm > Metal > OpenCL > CPU
+    for backend_type in [
+        BackendType::Cuda,
+        BackendType::Rocm,
+        BackendType::Metal,
+        BackendType::OpenCL,
+    ] {
+        if let Some(info) = backends.iter().find(|b| b.backend_type == backend_type) {
+            if info.available && !info.devices.is_empty() {
+                return backend_type;
+            }
+        }
+    }
+
+    BackendType::Cpu
+}
+
+/// Select a backend that can fit a model of the given size.
+pub fn select_backend_for_model(required_bytes: usize) -> anyhow::Result<(BackendType, usize)> {
+    let backends = discover_backends();
+
+    // Priority: CUDA > ROCm > Metal > OpenCL > CPU
+    for backend_type in [
+        BackendType::Cuda,
+        BackendType::Rocm,
+        BackendType::Metal,
+        BackendType::OpenCL,
+    ] {
+        if let Some(info) = backends.iter().find(|b| b.backend_type == backend_type) {
+            if info.available {
+                for device in &info.devices {
+                    if device.can_fit(required_bytes) {
+                        return Ok((backend_type, device.index));
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to CPU
+    if let Some(cpu_info) = backends.iter().find(|b| b.backend_type == BackendType::Cpu) {
+        if let Some(device) = cpu_info.devices.first() {
+            if device.can_fit(required_bytes) {
+                return Ok((BackendType::Cpu, 0));
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "No backend has enough memory for model ({:.2} GB required)",
+        required_bytes as f64 / 1024.0 / 1024.0 / 1024.0
+    )
+}
+
+/// Print a summary of all available backends.
+pub fn print_backend_summary() {
+    let backends = discover_backends();
+
+    println!("=== Available Backends ===");
+    for info in &backends {
+        let status = if info.available { "✓" } else { "✗" };
+        println!("{} {} ({})", status, info.name, info.backend_type);
+
+        if info.available {
+            for device in &info.devices {
+                println!("    {}", device);
+            }
+        } else if let Some(ref error) = info.error {
+            println!("    Error: {}", error);
+        }
+    }
+
+    let best = best_available_backend();
+    println!("\nRecommended backend: {}", best);
+}
+
+// =============================================================================
+// Backend-specific Discovery Functions
+// =============================================================================
+
+#[cfg(feature = "cuda")]
+fn discover_cuda() -> BackendInfo {
+    use cudarc::driver::CudaDevice;
+
+    let mut devices = Vec::new();
+    let mut available = false;
+
+    // Try to enumerate CUDA devices
+    match CudaDevice::count() {
+        Ok(count) if count > 0 => {
+            available = true;
+            for i in 0..count {
+                match CudaDevice::new(i) {
+                    Ok(device) => {
+                        // Get device properties
+                        let name = device.name().unwrap_or_else(|_| format!("CUDA Device {}", i));
+                        
+                        // Note: cudarc doesn't expose memory info directly
+                        // We'd need to call CUDA runtime APIs for that
+                        // For now, use a reasonable estimate
+                        devices.push(DeviceInfo {
+                            index: i,
+                            name,
+                            total_memory: 8 * 1024 * 1024 * 1024, // 8 GB estimate
+                            free_memory: None,
+                            compute_capability: None,
+                            unified_memory: false,
+                        });
+                    }
+                    Err(_) => continue,
+                }
+            }
+        }
+        Ok(_) => {
+            return BackendInfo {
+                backend_type: BackendType::Cuda,
+                name: "CUDA".to_string(),
+                available: false,
+                devices: vec![],
+                error: Some("No CUDA devices found".to_string()),
+            };
+        }
+        Err(e) => {
+            return BackendInfo {
+                backend_type: BackendType::Cuda,
+                name: "CUDA".to_string(),
+                available: false,
+                devices: vec![],
+                error: Some(format!("CUDA initialization failed: {:?}", e)),
+            };
+        }
+    }
+
+    BackendInfo {
+        backend_type: BackendType::Cuda,
+        name: "CUDA".to_string(),
+        available,
+        devices,
+        error: None,
+    }
+}
+
+#[cfg(feature = "rocm")]
+fn discover_rocm() -> BackendInfo {
+    // ROCm discovery - similar to CUDA but using HIP
+    // For now, return basic info since we don't have HIP bindings
+    BackendInfo {
+        backend_type: BackendType::Rocm,
+        name: "ROCm".to_string(),
+        available: RocmBackend::is_available(),
+        devices: if RocmBackend::is_available() {
+            vec![DeviceInfo {
+                index: 0,
+                name: "AMD GPU".to_string(),
+                total_memory: 8 * 1024 * 1024 * 1024, // 8 GB estimate
+                free_memory: None,
+                compute_capability: None,
+                unified_memory: false,
+            }]
+        } else {
+            vec![]
+        },
+        error: if !RocmBackend::is_available() {
+            Some("ROCm runtime not available".to_string())
+        } else {
+            None
+        },
+    }
+}
+
+#[cfg(feature = "metal-gpu")]
+fn discover_metal() -> BackendInfo {
+    use metal::Device;
+
+    match Device::system_default() {
+        Some(device) => {
+            let name = device.name().to_string();
+            let total_memory = device.recommended_max_working_set_size() as usize;
+
+            BackendInfo {
+                backend_type: BackendType::Metal,
+                name: "Metal".to_string(),
+                available: true,
+                devices: vec![DeviceInfo {
+                    index: 0,
+                    name,
+                    total_memory,
+                    free_memory: None, // Metal doesn't expose this directly
+                    compute_capability: None,
+                    unified_memory: true, // Apple Silicon always uses unified memory
+                }],
+                error: None,
+            }
+        }
+        None => BackendInfo {
+            backend_type: BackendType::Metal,
+            name: "Metal".to_string(),
+            available: false,
+            devices: vec![],
+            error: Some("No Metal device found".to_string()),
+        },
+    }
+}
+
+#[cfg(feature = "opencl")]
+fn discover_opencl() -> BackendInfo {
+    use ocl::{Platform, Device as OclDevice};
+
+    let mut devices = Vec::new();
+    let mut available = false;
+
+    // Enumerate all platforms and devices
+    if let Ok(platforms) = Platform::list() {
+        let mut device_index = 0;
+        for platform in platforms {
+            if let Ok(platform_devices) = OclDevice::list_all(&platform) {
+                for device in platform_devices {
+                    available = true;
+                    
+                    let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+                    let total_memory = device
+                        .info(ocl::enums::DeviceInfo::GlobalMemSize)
+                        .ok()
+                        .and_then(|info| match info {
+                            ocl::enums::DeviceInfoResult::GlobalMemSize(size) => Some(size as usize),
+                            _ => None,
+                        })
+                        .unwrap_or(0);
+
+                    devices.push(DeviceInfo {
+                        index: device_index,
+                        name,
+                        total_memory,
+                        free_memory: None,
+                        compute_capability: None,
+                        unified_memory: false,
+                    });
+                    device_index += 1;
+                }
+            }
+        }
+    }
+
+    BackendInfo {
+        backend_type: BackendType::OpenCL,
+        name: "OpenCL".to_string(),
+        available,
+        devices,
+        error: if !available {
+            Some("No OpenCL devices found".to_string())
+        } else {
+            None
+        },
+    }
+}
+
+// =============================================================================
+// System Information Helpers
+// =============================================================================
+
+/// Get the CPU name/model.
+fn get_cpu_name() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(contents) = std::fs::read_to_string("/proc/cpuinfo") {
+            for line in contents.lines() {
+                if line.starts_with("model name") {
+                    if let Some(name) = line.split(':').nth(1) {
+                        return name.trim().to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("sysctl").args(["-n", "machdep.cpu.brand_string"]).output() {
+            if output.status.success() {
+                if let Ok(name) = String::from_utf8(output.stdout) {
+                    return name.trim().to_string();
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("wmic").args(["cpu", "get", "name"]).output() {
+            if output.status.success() {
+                if let Ok(text) = String::from_utf8(output.stdout) {
+                    let lines: Vec<&str> = text.lines().collect();
+                    if lines.len() > 1 {
+                        return lines[1].trim().to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    "Unknown CPU".to_string()
+}
+
+/// Get total system memory in bytes.
+fn get_system_memory() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(contents) = std::fs::read_to_string("/proc/meminfo") {
+            for line in contents.lines() {
+                if line.starts_with("MemTotal:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        if let Ok(kb) = parts[1].parse::<usize>() {
+                            return kb * 1024;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("sysctl").args(["-n", "hw.memsize"]).output() {
+            if output.status.success() {
+                if let Ok(bytes_str) = String::from_utf8(output.stdout) {
+                    if let Ok(bytes) = bytes_str.trim().parse::<usize>() {
+                        return bytes;
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Windows MEMORYSTATUS would require windows-sys crate
+        // Return reasonable default
+        return 16 * 1024 * 1024 * 1024; // 16 GB default
+    }
+
+    16 * 1024 * 1024 * 1024 // 16 GB default
+}
+
+/// Get available (free) system memory in bytes.
+fn get_available_memory() -> Option<usize> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(contents) = std::fs::read_to_string("/proc/meminfo") {
+            for line in contents.lines() {
+                if line.starts_with("MemAvailable:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        if let Ok(kb) = parts[1].parse::<usize>() {
+                            return Some(kb * 1024);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        // On macOS, get page size and free pages
+        if let (Ok(pagesize_output), Ok(vmstat_output)) = (
+            Command::new("sysctl").args(["-n", "hw.pagesize"]).output(),
+            Command::new("vm_stat").output(),
+        ) {
+            if pagesize_output.status.success() && vmstat_output.status.success() {
+                if let Ok(pagesize_str) = String::from_utf8(pagesize_output.stdout) {
+                    if let Ok(pagesize) = pagesize_str.trim().parse::<usize>() {
+                        if let Ok(vmstat) = String::from_utf8(vmstat_output.stdout) {
+                            // Parse "Pages free" line
+                            for line in vmstat.lines() {
+                                if line.contains("Pages free:") {
+                                    let parts: Vec<&str> = line.split_whitespace().collect();
+                                    if let Some(pages_str) = parts.last() {
+                                        let pages_str = pages_str.trim_end_matches('.');
+                                        if let Ok(pages) = pages_str.parse::<usize>() {
+                                            return Some(pages * pagesize);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+// =============================================================================
+// Memory-Aware Backend Initialization
+// =============================================================================
+
+/// Initialize a backend with memory checks.
+///
+/// This function checks if there's enough memory available before initializing
+/// the backend, and provides helpful error messages if not.
+pub fn init_backend_with_memory_check(
+    preference: BackendPreference,
+    required_bytes: usize,
+) -> anyhow::Result<Backend> {
+    #[allow(unused_variables)]
+    let backends = discover_backends();
+
+    // If Auto preference, try to find best backend with enough memory
+    if matches!(preference, BackendPreference::Auto) {
+        match select_backend_for_model(required_bytes) {
+            Ok((BackendType::Cpu, _)) => return Ok(Backend::Cpu(CpuBackend::new())),
+            #[cfg(feature = "cuda")]
+            Ok((BackendType::Cuda, _)) => {
+                if let Ok(backend) = CudaBackend::new() {
+                    return Ok(Backend::Cuda(backend));
+                }
+            }
+            #[cfg(feature = "rocm")]
+            Ok((BackendType::Rocm, _)) => {
+                if let Ok(backend) = RocmBackend::new() {
+                    return Ok(Backend::Rocm(backend));
+                }
+            }
+            #[cfg(feature = "metal-gpu")]
+            Ok((BackendType::Metal, _)) => {
+                if let Ok(backend) = MetalBackend::new() {
+                    return Ok(Backend::Metal(backend));
+                }
+            }
+            #[cfg(feature = "opencl")]
+            Ok((BackendType::OpenCL, _)) => {
+                if let Ok(backend) = OpenCLBackend::new() {
+                    return Ok(Backend::OpenCL(backend));
+                }
+            }
+            _ => {}
+        }
+
+        // Fall back to regular init
+        return init_backend(BackendPreference::Auto);
+    }
+
+    // For specific preferences, check memory first
+    match preference {
+        BackendPreference::Cpu => {
+            // CPU always available
+            Ok(Backend::Cpu(CpuBackend::new()))
+        }
+        #[cfg(feature = "cuda")]
+        BackendPreference::Cuda => {
+            let cuda_info = backends.iter().find(|b| b.backend_type == BackendType::Cuda);
+            if let Some(info) = cuda_info {
+                if !info.available {
+                    anyhow::bail!("CUDA not available: {}", info.error.as_deref().unwrap_or("Unknown error"));
+                }
+                if let Some(device) = info.devices.first() {
+                    if !device.can_fit(required_bytes) {
+                        anyhow::bail!(
+                            "CUDA device {} has insufficient memory: {:.2} GB available, {:.2} GB required",
+                            device.name,
+                            device.free_memory.unwrap_or(device.total_memory) as f64 / 1024.0 / 1024.0 / 1024.0,
+                            required_bytes as f64 / 1024.0 / 1024.0 / 1024.0
+                        );
+                    }
+                }
+            }
+            Ok(Backend::Cuda(CudaBackend::new()?))
+        }
+        #[cfg(feature = "rocm")]
+        BackendPreference::Rocm => {
+            let rocm_info = backends.iter().find(|b| b.backend_type == BackendType::Rocm);
+            if let Some(info) = rocm_info {
+                if !info.available {
+                    anyhow::bail!("ROCm not available: {}", info.error.as_deref().unwrap_or("Unknown error"));
+                }
+            }
+            Ok(Backend::Rocm(RocmBackend::new()?))
+        }
+        #[cfg(feature = "metal-gpu")]
+        BackendPreference::Metal => {
+            let metal_info = backends.iter().find(|b| b.backend_type == BackendType::Metal);
+            if let Some(info) = metal_info {
+                if !info.available {
+                    anyhow::bail!("Metal not available: {}", info.error.as_deref().unwrap_or("Unknown error"));
+                }
+                if let Some(device) = info.devices.first() {
+                    if !device.can_fit(required_bytes) {
+                        anyhow::bail!(
+                            "Metal device {} has insufficient memory: {:.2} GB available, {:.2} GB required",
+                            device.name,
+                            device.total_memory as f64 / 1024.0 / 1024.0 / 1024.0,
+                            required_bytes as f64 / 1024.0 / 1024.0 / 1024.0
+                        );
+                    }
+                }
+            }
+            Ok(Backend::Metal(MetalBackend::new()?))
+        }
+        #[cfg(feature = "opencl")]
+        BackendPreference::OpenCL => {
+            let opencl_info = backends.iter().find(|b| b.backend_type == BackendType::OpenCL);
+            if let Some(info) = opencl_info {
+                if !info.available {
+                    anyhow::bail!("OpenCL not available: {}", info.error.as_deref().unwrap_or("Unknown error"));
+                }
+            }
+            Ok(Backend::OpenCL(OpenCLBackend::new()?))
+        }
+        #[allow(unreachable_patterns)]
+        _ => init_backend(preference),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

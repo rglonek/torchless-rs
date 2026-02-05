@@ -3,6 +3,9 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut1};
 
 pub mod backend;
 
+// Unified GPU memory management
+pub mod gpu_memory;
+
 // Architecture-specific SIMD implementations
 pub mod avx512;
 pub mod neon;
@@ -34,6 +37,31 @@ mod tests;
 
 // Re-export backend types for convenient access
 pub use backend::{Backend, BackendPreference, CpuBackend, KernelBackend, init_backend, default_backend};
+
+// Re-export backend discovery and device enumeration
+pub use backend::{
+    BackendInfo, BackendType, DeviceInfo,
+    discover_backends, best_available_backend, select_backend_for_model,
+    print_backend_summary, init_backend_with_memory_check,
+};
+
+// Re-export unified GPU memory management
+pub use gpu_memory::{
+    // Buffer tracking
+    BufferId, BufferMetadata, BufferLocation, AllocationTracker,
+    // Memory statistics and configuration
+    MemoryStats, MemoryConfig, MemoryPressure,
+    // Memory pool trait and generic implementation
+    GpuMemoryPool, GenericMemoryPool,
+    // Fallback buffer for GPU/CPU hybrid operation
+    FallbackBuffer,
+    // Device capabilities
+    DeviceCapabilities,
+    // Memory estimation utilities
+    InferenceMemoryEstimate,
+    estimate_model_memory, estimate_kv_cache_memory, estimate_inference_memory,
+    round_up_power_of_2, size_class, compute_f32_bytes, compute_f16_bytes,
+};
 
 // Re-export CUDA backend types when the feature is enabled
 #[cfg(feature = "cuda")]

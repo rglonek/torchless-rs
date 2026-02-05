@@ -28,6 +28,31 @@ pub use kernels::backend::{
     init_backend, default_backend,
 };
 
+// Backend discovery and device enumeration (Phase 5)
+pub use kernels::backend::{
+    BackendInfo, BackendType, DeviceInfo,
+    discover_backends, best_available_backend, select_backend_for_model,
+    print_backend_summary, init_backend_with_memory_check,
+};
+
+// Unified GPU memory management (Phase 5)
+pub use kernels::gpu_memory::{
+    // Buffer tracking
+    BufferId, BufferMetadata, BufferLocation, AllocationTracker,
+    // Memory statistics and configuration
+    MemoryStats as GpuMemoryStats, MemoryConfig, MemoryPressure,
+    // Memory pool trait and generic implementation
+    GpuMemoryPool, GenericMemoryPool,
+    // Fallback buffer for GPU/CPU hybrid operation
+    FallbackBuffer,
+    // Device capabilities
+    DeviceCapabilities,
+    // Memory estimation utilities
+    InferenceMemoryEstimate,
+    estimate_model_memory, estimate_kv_cache_memory, estimate_inference_memory,
+    round_up_power_of_2, size_class, compute_f32_bytes, compute_f16_bytes,
+};
+
 // CUDA backend (Phase 5)
 #[cfg(feature = "cuda")]
 pub use kernels::cuda::{

@@ -1,0 +1,61 @@
+name: Release Builds
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            ext: ""
+          - os: macos-13
+            target: macos-x86_64
+            ext: ""
+          - os: macos-14
+            target: macos-aarch64
+            ext: ""
+          - os: windows-latest
+            target: windows-x86_64
+            ext: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Make scripts executable
+        shell: bash
+        run: |
+          chmod +x scripts/*.sh scripts/hooks/*.sh || true
+
+      - name: Build (CPU-only)
+        shell: bash
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\\(.*\\)"/\\1/')
+          OUTPUT_DIR="releases"
+          OUTPUT_NAME="torchless-${VERSION}-${{ matrix.target }}${{ matrix.ext }}"
+          ./scripts/build.sh \
+            --target "${{ matrix.target }}" \
+            --cpu-only \
+            --profile release \
+            --output-dir "$OUTPUT_DIR" \
+            --output-name "$OUTPUT_NAME"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: torchless-${{ matrix.target }}
+          path: releases/torchless-*

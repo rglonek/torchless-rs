@@ -61,6 +61,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/releases}"
 VERSION="${VERSION:-$(grep '^version' "$PROJECT_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')}"
 DRY_RUN="${DRY_RUN:-false}"
 CLEAN="${CLEAN:-false}"
+ALLOW_CROSS_OS="${ALLOW_CROSS_OS:-false}"
 
 # =============================================================================
 # Help
@@ -90,6 +91,7 @@ ${BOLD}Output Options:${NC}
 
 ${BOLD}Other:${NC}
   --dry-run               Show what would be built without building
+  --allow-cross-os        Attempt cross-OS builds (requires toolchains/hooks)
   -h, --help              Show this help
 
 ${BOLD}Backends per Platform:${NC}
@@ -104,6 +106,15 @@ ${BOLD}Note on BLAS:${NC}
   macOS builds include Accelerate (bundled with OS).
   For faster CPU inference, build from source with --features openblas.
   See docs/optimization/build.md for details.
+
+${BOLD}Cross-OS Builds:${NC}
+  By default, cross-OS builds are skipped. Use --allow-cross-os to attempt them.
+  Provide a hook in scripts/hooks/ to configure toolchains. Supported hook names:
+    - cross_os_${HOST_OS}_to_<target_os>.sh
+    - cross_os_<target_os>.sh
+    - cross_os.sh
+  Hooks receive environment variables: HOST_OS, HOST_TARGET, TARGET, TARGET_OS,
+  TARGET_ARCH, RUST_TARGET, FEATURES, OUTPUT_DIR, OUTPUT_NAME.
 
 ${BOLD}Runtime Backend Selection:${NC}
   Each binary includes ALL backends for its platform. Select at runtime:
@@ -155,6 +166,8 @@ parse_args() {
                 CLEAN=true; shift ;;
             --dry-run)
                 DRY_RUN=true; shift ;;
+            --allow-cross-os)
+                ALLOW_CROSS_OS=true; shift ;;
             -h|--help)
                 show_help; exit 0 ;;
             *)
@@ -223,6 +236,56 @@ get_output_name() {
     echo "torchless-${VERSION}-${platform}${ext}"
 }
 
+get_rust_target() {
+    local platform="$1"
+    case "$platform" in
+        linux-x86_64)   echo "x86_64-unknown-linux-gnu" ;;
+        linux-aarch64)  echo "aarch64-unknown-linux-gnu" ;;
+        macos-x86_64)   echo "x86_64-apple-darwin" ;;
+        macos-aarch64)  echo "aarch64-apple-darwin" ;;
+        windows-x86_64) echo "x86_64-pc-windows-msvc" ;;
+        *)              echo "" ;;
+    esac
+}
+
+run_cross_os_hook() {
+    local platform="$1"
+    local target_os="${platform%-*}"
+    local target_arch="${platform#*-}"
+    local rust_target
+    rust_target=$(get_rust_target "$platform")
+
+    local hook_dir="$SCRIPT_DIR/hooks"
+    local hook_script=""
+    local host_to_target="$hook_dir/cross_os_${HOST_OS}_to_${target_os}.sh"
+    local target_only="$hook_dir/cross_os_${target_os}.sh"
+    local generic="$hook_dir/cross_os.sh"
+
+    if [ -f "$host_to_target" ]; then
+        hook_script="$host_to_target"
+    elif [ -f "$target_only" ]; then
+        hook_script="$target_only"
+    elif [ -f "$generic" ]; then
+        hook_script="$generic"
+    fi
+
+    if [ -z "$hook_script" ]; then
+        log_warn "  Cross-OS hook not found in scripts/hooks (proceeding anyway)"
+        return 0
+    fi
+
+    HOST_OS="$HOST_OS" \
+    HOST_TARGET="$HOST_TARGET" \
+    TARGET="$platform" \
+    TARGET_OS="$target_os" \
+    TARGET_ARCH="$target_arch" \
+    RUST_TARGET="$rust_target" \
+    FEATURES="$features" \
+    OUTPUT_DIR="$OUTPUT_DIR" \
+    OUTPUT_NAME="$output_name" \
+    source "$hook_script"
+}
+
 # =============================================================================
 # Build Functions
 # =============================================================================
@@ -250,9 +313,20 @@ build_platform() {
     if [ "$platform" != "$HOST_TARGET" ]; then
         local target_os="${platform%-*}"
         if [ "$target_os" != "$HOST_OS" ]; then
-            log_warn "  Skipping: cross-OS compilation not supported"
-            log_warn "  (Cannot build $platform from $HOST_TARGET)"
-            can_build=false
+            if [ "$ALLOW_CROSS_OS" = true ]; then
+                log_warn "  Cross-OS build enabled (hooks/toolchains required)"
+                if ! run_cross_os_hook "$platform"; then
+                    log_error "  Cross-OS hook failed for $platform"
+                    can_build=false
+                elif [ -n "${FEATURES_OVERRIDE:-}" ]; then
+                    features="$FEATURES_OVERRIDE"
+                    log_info "  Cross-OS features override: $features"
+                fi
+            else
+                log_warn "  Skipping: cross-OS compilation not supported"
+                log_warn "  (Cannot build $platform from $HOST_TARGET)"
+                can_build=false
+            fi
         fi
     fi
     

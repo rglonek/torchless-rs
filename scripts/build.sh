@@ -205,6 +205,11 @@ validate_target() {
 }
 
 configure_target_triple() {
+    if [ -n "${RUST_TARGET_OVERRIDE:-}" ]; then
+        RUST_TARGET="$RUST_TARGET_OVERRIDE"
+        log_info "Using RUST_TARGET override: $RUST_TARGET"
+        return 0
+    fi
     case "$TARGET" in
         linux-x86_64)   RUST_TARGET="x86_64-unknown-linux-gnu" ;;
         linux-aarch64)  RUST_TARGET="aarch64-unknown-linux-gnu" ;;

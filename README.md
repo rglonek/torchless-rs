@@ -36,7 +36,7 @@ Use the provided build scripts for easy configuration:
 # Build with PGO for 5-15% speedup
 ./scripts/build.sh --pgo
 
-# Build release binaries (cpu + gpu flavors)
+# Build release binary (all backends compiled in)
 ./scripts/build_releases.sh
 
 # Preview what would be built

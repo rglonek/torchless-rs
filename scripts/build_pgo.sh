@@ -22,26 +22,27 @@ PROMPT="${PROMPT:-Hello, how are you today?}"
 MAX_TOKENS="${MAX_TOKENS:-100}"
 FEATURES="${FEATURES:-parallel,simd}"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# Use $'...' syntax for portable color codes
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+CYAN=$'\033[0;36m'
+NC=$'\033[0m'
 
 log_info() {
-    echo -e "${GREEN}[PGO]${NC} $1"
+    printf '%s[PGO]%s %s\n' "$GREEN" "$NC" "$1"
 }
 
 log_warn() {
-    echo -e "${YELLOW}[PGO]${NC} $1"
+    printf '%s[PGO]%s %s\n' "$YELLOW" "$NC" "$1"
 }
 
 log_error() {
-    echo -e "${RED}[PGO]${NC} $1"
+    printf '%s[PGO]%s %s\n' "$RED" "$NC" "$1"
 }
 
 log_step() {
-    echo -e "${CYAN}[PGO]${NC} $1"
+    printf '%s[PGO]%s %s\n' "$CYAN" "$NC" "$1"
 }
 
 show_help() {

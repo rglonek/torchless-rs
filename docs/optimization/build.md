@@ -34,34 +34,41 @@ See `./scripts/build.sh --help` for all options.
 
 ### Release Builder
 
-The `scripts/build_releases.sh` script creates multiple release flavors:
+The `scripts/build_releases.sh` script creates ONE binary per platform with all GPU backends compiled in:
 
 ```bash
-# Build all flavors for current host
+# Build for current host
 ./scripts/build_releases.sh
+
+# Build for all platforms
+./scripts/build_releases.sh --all-platforms
 
 # Build specific platforms
 ./scripts/build_releases.sh --platforms linux-x86_64,macos-aarch64
 
-# Build specific flavors
-./scripts/build_releases.sh --flavors cpu,cuda,metal
-
 # Preview builds without executing
 ./scripts/build_releases.sh --dry-run
-
-# Build CPU-only for all platforms
-./scripts/build_releases.sh --all-platforms --cpu-only
 ```
 
-Output structure:
+Output structure (5 binaries total):
 ```
 releases/
-├── torchless-0.1.0-linux-x86_64-cpu
-├── torchless-0.1.0-linux-x86_64-cuda
-├── torchless-0.1.0-linux-x86_64-rocm
-├── torchless-0.1.0-macos-aarch64-cpu
-├── torchless-0.1.0-macos-aarch64-metal
-└── ...
+├── torchless-0.1.0-linux-x86_64       # cuda + rocm + opencl + cpu
+├── torchless-0.1.0-linux-aarch64      # opencl + cpu
+├── torchless-0.1.0-macos-x86_64       # opencl + accelerate + cpu
+├── torchless-0.1.0-macos-aarch64      # metal + opencl + accelerate + cpu
+└── torchless-0.1.0-windows-x86_64.exe # cuda + opencl + cpu
+```
+
+Note: Release builds do not include OpenBLAS/BLIS (requires external libraries). 
+macOS builds include Accelerate (bundled with OS). See [BLAS Support](#blas-support-optional) below.
+
+Users select the backend at runtime:
+```bash
+./torchless --backend auto model.bin "Hello"   # Auto-select best (GPU if available)
+./torchless --backend cuda model.bin "Hello"   # Force CUDA
+./torchless --backend cpu model.bin "Hello"    # Force CPU only
+./torchless --list-backends                    # Show available backends
 ```
 
 ---
@@ -228,6 +235,73 @@ cargo build --release --features "simd,parallel,opencl,accelerate"
 ### Cross-Platform GPU
 ```bash
 cargo build --release --features "simd,parallel,opencl"
+```
+
+---
+
+## BLAS Support (Optional)
+
+BLAS (Basic Linear Algebra Subprograms) libraries provide highly optimized CPU matrix operations. torchless supports OpenBLAS, BLIS, and Apple Accelerate.
+
+### Why BLAS Isn't in Release Builds
+
+The pre-built release binaries do **not** include OpenBLAS or BLIS because:
+- They require external system libraries to be installed
+- Cross-compilation with BLAS is complex
+- GPU acceleration (CUDA, Metal, ROCm, OpenCL) provides greater speedups for most users
+
+macOS releases **do** include Accelerate, which is bundled with the OS.
+
+### When BLAS Helps
+
+BLAS provides 2-10x faster CPU matrix operations, beneficial when:
+- Using `--backend cpu` (no GPU)
+- Running on systems without GPU support
+- GPU memory is insufficient for the model
+
+### Building with BLAS
+
+If you want BLAS support, build from source:
+
+**Linux with OpenBLAS:**
+```bash
+# Install OpenBLAS
+sudo apt install libopenblas-dev  # Debian/Ubuntu
+sudo dnf install openblas-devel   # Fedora/RHEL
+
+# Build with OpenBLAS
+cargo build --release --features "simd,parallel,openblas"
+```
+
+**Linux with BLIS (good for AMD CPUs):**
+```bash
+# Install BLIS
+sudo apt install libblis-dev
+
+# Build with BLIS
+cargo build --release --features "simd,parallel,blis"
+```
+
+**macOS (Accelerate is automatic):**
+```bash
+# Accelerate is included in macOS, no install needed
+cargo build --release --features "simd,parallel,accelerate"
+```
+
+### Available BLAS Features
+
+| Feature | Library | Best For | Install Required |
+|---------|---------|----------|------------------|
+| `openblas` | OpenBLAS | General Linux/Windows | Yes (`libopenblas-dev`) |
+| `blis` | BLIS | AMD CPUs | Yes (`libblis-dev`) |
+| `accelerate` | Apple Accelerate | macOS | No (bundled with OS) |
+
+### Combining with GPU
+
+You can enable both BLAS and GPU features. BLAS will be used when `--backend cpu` is selected:
+
+```bash
+cargo build --release --features "simd,parallel,cuda,openblas"
 ```
 
 ---

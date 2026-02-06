@@ -217,6 +217,42 @@ configure_target_triple() {
     esac
 }
 
+# Ensure the Rust target is installed when cross-compiling (e.g. macos-aarch64 from macos-x86_64).
+# We add the target to the default toolchain and run cargo via "rustup run <toolchain> cargo"
+# so the build uses the same toolchain we installed the target for.
+ensure_target_installed() {
+    if [ "$TARGET" = "$HOST_TARGET" ]; then
+        return 0
+    fi
+    if ! command -v rustup &>/dev/null; then
+        log_warn "rustup not found; ensure target $RUST_TARGET is installed for cross-compilation"
+        return 0
+    fi
+    # Resolve the actual default toolchain name (e.g. stable-x86_64-apple-darwin); "default" is not valid for rustup run
+    local toolchain
+    toolchain=$(rustup show 2>/dev/null | grep '(default)' | head -1 | awk '{print $1}')
+    if [ -z "$toolchain" ]; then
+        log_error "Could not determine default Rust toolchain. Run: rustup target add $RUST_TARGET"
+        exit 1
+    fi
+    log_info "Using toolchain: $toolchain"
+    # Add target to that toolchain (idempotent)
+    log_info "Ensuring Rust target $RUST_TARGET for $toolchain"
+    rustup target add --toolchain "$toolchain" "$RUST_TARGET" || {
+        log_error "Failed to install target $RUST_TARGET. Run: rustup target add --toolchain $toolchain $RUST_TARGET"
+        exit 1
+    }
+    # Verify rustc for this toolchain can see the target
+    if ! rustup run "$toolchain" rustc --target "$RUST_TARGET" --print sysroot >/dev/null 2>&1; then
+        log_error "Toolchain $toolchain cannot use target $RUST_TARGET. Run: rustup target add --toolchain $toolchain $RUST_TARGET"
+        exit 1
+    fi
+    # Force cargo/rustc to use this toolchain's binaries even if RUSTC is set
+    export RUSTUP_TOOLCHAIN="$toolchain"
+    export RUSTC="$(rustup which rustc --toolchain "$toolchain" 2>/dev/null)"
+    export CARGO="$(rustup which cargo --toolchain "$toolchain" 2>/dev/null)"
+}
+
 configure_features() {
     # Handle --all-gpu based on target
     if [ "${ALL_GPU:-false}" = true ]; then
@@ -355,12 +391,18 @@ build_regular() {
         cargo_args+=("-v")
     fi
     
-    # Run build
+    # Run build (use rustup run when cross-compiling so we use the toolchain we installed the target for)
     cd "$PROJECT_DIR"
+    local cargo_cmd="cargo"
+    if [ -n "${CARGO:-}" ]; then
+        cargo_cmd="$CARGO"
+    elif [ "$TARGET" != "$HOST_TARGET" ] && [ -n "${RUSTUP_TOOLCHAIN:-}" ]; then
+        cargo_cmd="rustup run $RUSTUP_TOOLCHAIN cargo"
+    fi
     if [ -n "$RUSTFLAGS" ]; then
-        RUSTFLAGS="$RUSTFLAGS" cargo "${cargo_args[@]}"
+        RUSTFLAGS="$RUSTFLAGS" $cargo_cmd "${cargo_args[@]}"
     else
-        cargo "${cargo_args[@]}"
+        $cargo_cmd "${cargo_args[@]}"
     fi
 }
 
@@ -431,6 +473,7 @@ main() {
     parse_args "$@"
     validate_target
     configure_target_triple
+    ensure_target_installed
     configure_features
     configure_output
     configure_rustflags

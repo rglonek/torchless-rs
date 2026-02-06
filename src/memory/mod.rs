@@ -335,16 +335,9 @@ pub unsafe fn prefetch_read<T>(ptr: *const T) {
 }
 
 #[inline]
-#[cfg(target_arch = "aarch64")]
-pub unsafe fn prefetch_read<T>(ptr: *const T) {
-    use std::arch::aarch64::_prefetch;
-    _prefetch(ptr as *const i8, std::arch::aarch64::_PREFETCH_READ, std::arch::aarch64::_PREFETCH_LOCALITY3);
-}
-
-#[inline]
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn prefetch_read<T>(_ptr: *const T) {
-    // No-op on unsupported architectures
+    // No-op on unsupported architectures or when prefetch intrinsics are unstable.
 }
 
 /// Prefetch data for writing into L1 cache.
@@ -362,16 +355,9 @@ pub unsafe fn prefetch_write<T>(ptr: *mut T) {
 }
 
 #[inline]
-#[cfg(target_arch = "aarch64")]
-pub unsafe fn prefetch_write<T>(ptr: *mut T) {
-    use std::arch::aarch64::_prefetch;
-    _prefetch(ptr as *const i8, std::arch::aarch64::_PREFETCH_WRITE, std::arch::aarch64::_PREFETCH_LOCALITY3);
-}
-
-#[inline]
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn prefetch_write<T>(_ptr: *mut T) {
-    // No-op on unsupported architectures
+    // No-op on unsupported architectures or when prefetch intrinsics are unstable.
 }
 
 /// Prefetch multiple cache lines ahead for sequential access.

@@ -1,0 +1,8 @@
+# Link Accelerate on macOS so CBLAS symbols (from ndarray/blas with accelerate feature) resolve.
+# build.rs emits this when the accelerate feature is enabled; this ensures the linker
+# always sees it (e.g. with LTO). Harmless when the feature is disabled.
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-framework", "-C", "link-arg=Accelerate"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-framework", "-C", "link-arg=Accelerate"]

@@ -16,6 +16,9 @@ rand = "0.8"
 # Half-precision floating point support
 half = "2.4"
 
+# Safetensors format support (Phase 7)
+safetensors = "0.4"
+
 # Arena allocator for efficient inference memory management
 bumpalo = "3.14"
 

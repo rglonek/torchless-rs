@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 mod parameters;
 pub mod quantization;
+pub mod formats;
 #[cfg(test)]
 mod tests;
 
@@ -11,6 +12,16 @@ pub use quantization::{
     QuantFormat, QuantizedTensor, 
     Q4_0Block, Q8_0Block, Q4KMBlock, Q4KSBlock,
     QK4_0, QK8_0, QK_K,
+};
+
+// Phase 7: Format Support
+pub use formats::{
+    // Format detection and auto-loading
+    ModelFormat, detect_format, load_model_auto, UnifiedModelData, UnifiedConfig,
+    // GGUF format
+    GGUFLoader, GGUFMetadata, GGUFTensorInfo, GGMLType,
+    // Safetensors format
+    SafetensorsLoader, SafetensorsTensorInfo,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

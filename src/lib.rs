@@ -16,6 +16,32 @@ pub use loader::{
     QK4_0, QK8_0, QK_K,
 };
 
+// =============================================================================
+// Phase 7: Multi-Format Support
+// =============================================================================
+
+// Format detection and unified loading
+pub use loader::{
+    ModelFormat, detect_format, load_model_auto,
+    UnifiedModelData, UnifiedConfig,
+};
+
+// GGUF format (llama.cpp compatible)
+pub use loader::{
+    GGUFLoader, GGUFMetadata, GGUFTensorInfo, GGMLType,
+};
+
+// Safetensors format (HuggingFace compatible)
+pub use loader::{
+    SafetensorsLoader, SafetensorsTensorInfo,
+};
+
+// Additional Safetensors utilities
+pub use loader::formats::safetensors::{
+    load_with_config as load_safetensors_with_config,
+    parse_hf_config,
+};
+
 // Model types
 pub use model::{ArenaInferenceState, InferenceState, LazyMistral, Mistral};
 

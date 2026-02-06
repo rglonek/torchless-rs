@@ -5,6 +5,8 @@ GPU-accelerated inference for NVIDIA GPUs using CUDA.
 **Impact:** SPEED+++ (10-100x vs CPU)  
 **Platform:** Linux, Windows
 
+> **Note:** The CUDA backend has full kernel implementations. However, `UnifiedTensor::to_device()` is not yet implemented—use `CudaBackend::to_device_1d/2d()` for explicit data transfer.
+
 ## Architecture
 
 ```

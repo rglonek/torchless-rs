@@ -5,6 +5,8 @@ GPU-accelerated inference on Apple Silicon using Metal compute shaders.
 **Impact:** SPEED+++ (10-50x vs CPU)  
 **Platform:** macOS (Apple Silicon M1/M2/M3, Intel Macs with Metal support)
 
+> **Note:** The Metal backend has full kernel implementations. However, `UnifiedTensor::to_device()` is not yet implemented—use `MetalBackend::to_device_1d()` for explicit data transfer.
+
 ## Architecture
 
 ```

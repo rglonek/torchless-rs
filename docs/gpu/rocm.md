@@ -5,6 +5,8 @@ GPU-accelerated inference for AMD GPUs using ROCm/HIP.
 **Impact:** SPEED+++ (10-100x vs CPU)  
 **Platform:** Linux only
 
+> **Note:** The ROCm backend framework is implemented. However, `UnifiedTensor::to_device()` is not yet implemented, and `Rocm` is missing from the `Device` enum. Use explicit data transfer methods for now.
+
 ## Architecture
 
 ```

@@ -2,6 +2,16 @@
 
 GPU support provides 10-100x speedup over CPU inference.
 
+## Current Status
+
+All GPU backends have **full kernel implementations** for core transformer operations (matmul, rmsnorm, softmax, silu, rope, attention). However, the `DeviceTransfer` trait for `UnifiedTensor` is **not yet complete**, meaning:
+
+- GPU operations require explicit CPU-GPU data copies
+- Models cannot be loaded directly to GPU via `UnifiedTensor::to_device()`
+- Use the backend-specific `to_device_1d/2d()` methods for data transfer
+
+See [FUTURE.md](../../FUTURE.md) for the roadmap to complete unified tensor transfer.
+
 ## Supported Backends
 
 | Backend | Vendor | Feature Flag | Platforms |

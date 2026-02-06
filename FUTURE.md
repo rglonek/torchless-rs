@@ -1,6 +1,6 @@
 # Future Optimizations Roadmap
 
-This document outlines potential optimizations to match or exceed C/C++ inference performance while providing flexible memory/speed tradeoffs.
+This document tracks remaining optimizations and improvements that have not yet been implemented.
 
 ## Priority Legend
 
@@ -10,461 +10,144 @@ This document outlines potential optimizations to match or exceed C/C++ inferenc
 
 ---
 
-## 1. Quantization Options (Memory/Speed Tradeoffs)
+## 1. GPU Unified Tensor Transfer
 
-| Quantization | Memory (7B) | Speed | Quality | Status |
-|--------------|-------------|-------|---------|--------|
-| FP32 | ~28GB | Baseline | Best | ✅ Done |
-| FP16 | ~14GB | Faster | Excellent | ❌ Not implemented |
-| INT8 | ~7GB | Fast | Very Good | ✅ Done |
-| **INT4** | ~4GB | Fast | Good | ❌ Not implemented |
-| INT4 + FP16 (mixed) | ~5GB | Fast | Very Good | ❌ Not implemented |
+### 🔴 DeviceTransfer Implementation for UnifiedTensor
 
-### 🔴 INT4 Quantization
+The GPU backends (CUDA, Metal, ROCm, OpenCL) have full kernel implementations, but the `DeviceTransfer` trait for `UnifiedTensor` is not yet complete. Currently, GPU operations require explicit CPU-GPU data copies rather than automatic tensor transfer.
 
-Add 4-bit quantization for the "sweet spot" between memory and quality.
+**Current state:**
+- ✅ GPU kernel implementations (matmul, rmsnorm, softmax, silu, rope, attention)
+- ✅ GPU memory pools and buffer management
+- ❌ `UnifiedTensor::to_device()` for GPU targets (returns "not yet implemented")
+- ❌ Automatic data movement for quantized tensor types on GPU
 
-**Formats to implement:**
+**Implementation needed:**
+- [ ] Implement `DeviceTransfer::to_device()` for CUDA device
+- [ ] Implement `DeviceTransfer::to_device()` for Metal device
+- [ ] Implement `DeviceTransfer::to_device()` for ROCm device
+- [ ] Implement `DeviceTransfer::to_device()` for OpenCL device
+- [ ] Add GPU-side storage for quantized types (F16, BF16, Int8, Int4)
+- [ ] Implement automatic tensor synchronization between CPU and GPU
 
-- [ ] **Q4_0** - Simple 4-bit with FP16 scale per block (32 weights)
-- [ ] **Q4_K_M** - K-quants with super-blocks, better quality
-- [ ] **Q4_K_S** - Smaller variant for memory-constrained systems
+**Location:** `src/tensor/storage.rs` - `DeviceTransfer` trait implementation
 
-**Implementation approach:**
-```rust
-// Block structure for Q4_0
-struct Q4Block {
-    scale: f16,           // 2 bytes
-    weights: [u8; 16],    // 16 bytes = 32 x 4-bit weights
-}
-
-// Dequantization: weight = (nibble - 8) * scale
-fn dequantize_q4(block: &Q4Block, index: usize) -> f32 {
-    let nibble = if index % 2 == 0 {
-        block.weights[index / 2] & 0x0F
-    } else {
-        block.weights[index / 2] >> 4
-    };
-    (nibble as f32 - 8.0) * block.scale.to_f32()
-}
-```
-
-**Estimated effort:** 2-3 weeks
-
-### 🟡 FP16 Support
-
-Add half-precision floating point for 2x memory reduction with minimal quality loss.
-
-- [ ] Use `half` crate for FP16 type
-- [ ] Add FP16 tensor storage and operations
-- [ ] SIMD FP16 kernels (AVX-512 FP16, ARM FP16)
-
-**Estimated effort:** 1-2 weeks
-
-### 🟢 Mixed Precision
-
-Combine INT4 weights with FP16 activations for better quality.
-
-- [ ] INT4 weights, FP16 KV cache
-- [ ] FP16 attention scores, INT4 MLP weights
+**Impact:** Enables seamless model loading to GPU without manual data management
 
 ---
 
-## 2. SIMD Optimizations
+## 2. ROCm Device Enum Integration
 
-### 🔴 AVX-512 Support
+### 🟡 Add ROCm to Device Enum
 
-Current SIMD uses `wide` crate (AVX2 max). AVX-512 can double throughput.
+The `Device` enum in `src/tensor/storage.rs` is missing the `Rocm` variant, despite the ROCm backend being implemented.
 
-- [ ] Add `avx512` feature flag
-- [ ] Implement AVX-512 variants of all kernels
-- [ ] Runtime CPU detection for automatic selection
-
-**Target kernels:**
+**Current state:**
 ```rust
-#[cfg(target_feature = "avx512f")]
-pub fn matmul_vec_avx512(weights: &[f32], input: &[f32], output: &mut [f32]) {
-    // Process 16 floats per iteration instead of 8
-    use std::arch::x86_64::*;
-    // ...
+pub enum Device {
+    Cpu,
+    Cuda(usize),
+    Metal(usize),
+    OpenCL(usize),
+    // Missing: Rocm(usize)
 }
 ```
 
-**Estimated speedup:** 1.5-2x on supported CPUs
+**Implementation needed:**
+- [ ] Add `Rocm(usize)` variant to `Device` enum
+- [ ] Update `DeviceTransfer` trait to handle `Rocm` device
+- [ ] Update any match statements that use `Device`
 
-### 🟡 ARM NEON Optimization
+**Location:** `src/tensor/storage.rs`
 
-Improve ARM performance beyond what `wide` provides.
-
-- [ ] Hand-tuned NEON intrinsics for Apple Silicon
-- [ ] Use `std::arch::aarch64` for direct control
-- [ ] Optimize for M1/M2/M3 cache hierarchies
-
-### 🟡 Architecture-Specific Dispatch
-
-Runtime detection to use best available instruction set.
-
-```rust
-pub fn fast_matmul_vec(weights: &[f32], input: &[f32]) -> Vec<f32> {
-    if is_x86_feature_detected!("avx512f") {
-        matmul_vec_avx512(weights, input)
-    } else if is_x86_feature_detected!("avx2") {
-        matmul_vec_avx2(weights, input)
-    } else if is_x86_feature_detected!("avx") {
-        matmul_vec_avx(weights, input)
-    } else {
-        matmul_vec_scalar(weights, input)
-    }
-}
-```
+**Impact:** Completes AMD GPU support integration
 
 ---
 
-## 3. Memory Optimizations
+## 3. WebGPU Backend
 
-### 🔴 Custom Allocator
+### 🟢 Cross-Platform GPU via wgpu
 
-Replace default allocator with arena/bump allocator for inference buffers.
-
-- [ ] Use `bumpalo` for per-token allocations
-- [ ] Pre-allocate all inference buffers at model load
-- [ ] Zero-copy tensor views where possible
+Add WebGPU support for cross-platform GPU acceleration.
 
 **Benefits:**
-- Eliminate allocation overhead during inference
-- Better cache locality
-- Reduced memory fragmentation
+- Works across all platforms (Windows, Linux, macOS)
+- Potential future browser deployment
+- Standardized modern GPU API
 
-### 🟡 Cache-Aligned Memory Layout
+**Implementation needed:**
+- [ ] Add `wgpu` crate dependency
+- [ ] Implement `WebGPUBackend` struct
+- [ ] Write WGSL compute shaders for core operations:
+  - [ ] matmul_vec kernel
+  - [ ] rmsnorm kernel
+  - [ ] softmax kernel
+  - [ ] silu kernel
+  - [ ] rope kernel
+  - [ ] attention kernels
+- [ ] Add buffer management
+- [ ] Integrate with `init_backend()` selection
 
-Align all weight tensors to cache line boundaries (64 bytes).
+**Reference implementations:** See `src/kernels/cuda/mod.rs` and `src/kernels/metal/mod.rs`
 
-```rust
-#[repr(C, align(64))]
-struct AlignedWeights {
-    data: Vec<f32>,
-}
-```
-
-### 🟡 Memory Prefetching
-
-Add explicit prefetch hints for sequential access patterns.
-
-```rust
-use std::arch::x86_64::_mm_prefetch;
-
-unsafe {
-    _mm_prefetch(weights.as_ptr().add(64) as *const i8, _MM_HINT_T0);
-}
-```
+**Estimated effort:** Medium - similar structure to existing GPU backends
 
 ---
 
-## 4. Algorithmic Optimizations
+## 4. Profile-Guided Optimization (PGO)
 
-### 🔴 Flash Attention
+### 🟡 Complete PGO Workflow
 
-Implement memory-efficient attention that reduces memory bandwidth.
+The `Cargo.toml` has PGO-friendly settings, but the full workflow requires documentation and scripting.
 
-**Benefits:**
-- O(N) memory instead of O(N²) for attention scores
-- Better GPU utilization (future GPU support)
-- Faster for long sequences
+**Current state:**
+- ✅ Release profile optimized (`lto = "fat"`, `codegen-units = 1`)
+- ❌ No automated PGO build script
+- ❌ No documented PGO workflow
 
-**Implementation:**
-- [ ] Tiled softmax computation
-- [ ] Online softmax normalization
-- [ ] Fused attention kernel
+**Implementation needed:**
+- [ ] Create `scripts/build_pgo.sh` automation script
+- [ ] Document PGO workflow in `docs/optimization/build.md`
+- [ ] Add representative profiling workload
+- [ ] Add CI job for PGO builds (optional)
 
-**Reference:** [FlashAttention paper](https://arxiv.org/abs/2205.14135)
-
-### 🔴 Fused Kernels
-
-Combine multiple operations into single passes to reduce memory bandwidth.
-
-**Candidates:**
-- [ ] Fused RMSNorm + Linear
-- [ ] Fused Linear + SiLU + Linear (SwiGLU)
-- [ ] Fused Attention (Q·K + softmax + ·V)
-- [ ] Fused dequantize + matmul (partially done for INT8)
-
-### 🟡 Speculative Decoding
-
-Use smaller draft model to propose tokens, verify with main model.
-
-- [ ] Support for draft model loading
-- [ ] Batch verification of proposed tokens
-- [ ] Tree-based speculation
-
-**Estimated speedup:** 2-3x for autoregressive generation
-
-### 🟡 Continuous Batching
-
-Process multiple sequences with different lengths efficiently.
-
-- [ ] Sequence-level batching
-- [ ] Dynamic batch size based on memory
-- [ ] Preemption for long sequences
-
----
-
-## 5. Parallelization Improvements
-
-### 🔴 Better Work Distribution
-
-Current parallel implementation may have load imbalance.
-
-- [ ] Profile and optimize Rayon chunk sizes
-- [ ] Implement work-stealing for uneven workloads
-- [ ] NUMA-aware thread placement
-
-### 🟡 Pipeline Parallelism
-
-Overlap computation of different layers.
-
-```
-Time ->
-Layer 0: [Token 1] [Token 2] [Token 3]
-Layer 1:          [Token 1] [Token 2] [Token 3]
-Layer 2:                    [Token 1] [Token 2] [Token 3]
-```
-
-### 🟢 Tensor Parallelism
-
-Split large matrices across threads for single-token latency.
-
-- [ ] Column-parallel linear layers
-- [ ] Row-parallel linear layers
-- [ ] All-reduce for combining results
-
----
-
-## 6. GPU Support
-
-### 🔴 CUDA Backend
-
-Add NVIDIA GPU support for massive speedup.
-
-**Options:**
-1. **cuBLAS** - Easy, good for matmul
-2. **Custom CUDA kernels** - Best performance
-3. **Rust CUDA bindings** (`cuda-rs`, `cudarc`)
-
-**Implementation path:**
-- [ ] Abstract backend trait (`CpuBackend`, `CudaBackend`)
-- [ ] cuBLAS integration for matmul
-- [ ] Custom attention kernel
-- [ ] Memory management (pinned memory, async transfers)
-
-### 🟡 Metal Backend (Apple Silicon)
-
-Native GPU acceleration for Mac.
-
-- [ ] Use `metal-rs` crate
-- [ ] Metal Performance Shaders for matmul
-- [ ] Custom compute shaders for attention
-
-### 🟢 WebGPU Backend
-
-Cross-platform GPU via `wgpu` crate.
-
-- [ ] WGSL compute shaders
-- [ ] Works on all platforms
-- [ ] Good for browser deployment (future)
-
----
-
-## 7. Unsafe Optimizations
-
-### 🟡 Bounds Check Elimination
-
-Remove bounds checks in hot loops.
-
-```rust
-// Current (safe)
-for i in 0..n {
-    output[i] = input[i] * weight[i];
-}
-
-// Optimized (unsafe)
-unsafe {
-    let out_ptr = output.as_mut_ptr();
-    let in_ptr = input.as_ptr();
-    let w_ptr = weight.as_ptr();
-    for i in 0..n {
-        *out_ptr.add(i) = *in_ptr.add(i) * *w_ptr.add(i);
-    }
-}
-```
-
-### 🟡 Raw Pointer SIMD
-
-Direct SIMD intrinsics without `wide` crate abstraction.
-
-```rust
-use std::arch::x86_64::*;
-
-unsafe fn dot_product_avx2(a: &[f32], b: &[f32]) -> f32 {
-    let mut sum = _mm256_setzero_ps();
-    for i in (0..a.len()).step_by(8) {
-        let va = _mm256_loadu_ps(a.as_ptr().add(i));
-        let vb = _mm256_loadu_ps(b.as_ptr().add(i));
-        sum = _mm256_fmadd_ps(va, vb, sum);
-    }
-    // Horizontal sum...
-}
-```
-
----
-
-## 8. Build Optimizations
-
-### 🟡 Profile-Guided Optimization (PGO)
-
-Build with runtime profile data for better code generation.
-
+**PGO workflow:**
 ```bash
-# Step 1: Build with profiling
+# Step 1: Build with profiling instrumentation
 RUSTFLAGS="-Cprofile-generate=/tmp/pgo-data" cargo build --release
 
 # Step 2: Run representative workload
 ./target/release/torchless model.bin "test prompt" --max-tokens 100
 
-# Step 3: Build with profile data
+# Step 3: Merge profile data
+llvm-profdata merge -o /tmp/pgo-data/merged.profdata /tmp/pgo-data
+
+# Step 4: Build with profile data
 RUSTFLAGS="-Cprofile-use=/tmp/pgo-data/merged.profdata" cargo build --release
 ```
 
-**Estimated speedup:** 5-15%
-
-### 🟡 Link-Time Optimization (LTO)
-
-Enable cross-crate optimization.
-
-```toml
-# Cargo.toml
-[profile.release]
-lto = "fat"
-codegen-units = 1
-panic = "abort"
-```
-
-**Estimated speedup:** 5-10%
-
-### 🟢 Target-Specific Builds
-
-Optimize for specific CPU.
-
-```bash
-RUSTFLAGS="-C target-cpu=native" cargo build --release
-```
+**Expected speedup:** 5-15%
 
 ---
 
-## 9. Model Format Improvements
+## Summary
 
-### 🟡 GGUF Compatibility
-
-Support llama.cpp's GGUF format for broader model ecosystem.
-
-- [ ] GGUF parser
-- [ ] Multiple quantization format support
-- [ ] Metadata handling
-
-**Benefits:**
-- Access to pre-quantized models
-- Community model compatibility
-- No need for separate export step
-
-### 🟢 Safetensors Support
-
-Load models directly from HuggingFace format.
-
-- [ ] Parse safetensors format
-- [ ] On-the-fly quantization option
-- [ ] Streaming model loading
-
----
-
-## 10. Additional Model Support
-
-### 🟡 LLaMA Architecture
-
-Extend beyond Mistral to support LLaMA models.
-
-- [ ] LLaMA 2 (7B, 13B, 70B)
-- [ ] LLaMA 3 / 3.1
-- [ ] Code Llama
-
-### 🟢 Other Architectures
-
-- [ ] Phi-3
-- [ ] Gemma
-- [ ] Qwen
-
----
-
-## Implementation Priority
-
-### Phase 1: Quick Wins (Match llama.cpp for simple use cases)
-1. INT4 quantization (Q4_0)
-2. LTO + PGO build optimizations
-3. Bounds check elimination in hot paths
-4. Better work distribution for parallel
-
-### Phase 2: Performance Parity
-1. AVX-512 SIMD kernels
-2. Fused kernels (RMSNorm+Linear, SwiGLU)
-3. Flash Attention
-4. Custom allocator
-
-### Phase 3: Exceed C/C++ (with hardware acceleration)
-1. CUDA backend
-2. Metal backend
-3. Speculative decoding
-4. Continuous batching
-
-### Phase 4: Ecosystem
-1. GGUF format support
-2. Additional model architectures
-3. Safetensors support
-
----
-
-## Benchmarking Plan
-
-To validate optimizations, implement comprehensive benchmarks:
-
-```bash
-# Token generation throughput (tokens/second)
-cargo bench --bench generation_bench
-
-# Time-to-first-token (TTFT) latency
-cargo bench --bench latency_bench
-
-# Memory usage profiling
-cargo bench --bench memory_bench
-
-# Compare against llama.cpp
-./scripts/benchmark_comparison.sh
-```
-
-**Metrics to track:**
-- Tokens per second (various batch sizes)
-- Time to first token
-- Peak memory usage
-- Memory bandwidth utilization
-- CPU utilization
+| Item | Priority | Status |
+|------|----------|--------|
+| GPU DeviceTransfer for UnifiedTensor | 🔴 High | Framework ready, transfer pending |
+| ROCm Device enum | 🟡 Medium | Backend ready, enum missing |
+| WebGPU Backend | 🟢 Low | Not started |
+| PGO Workflow Automation | 🟡 Medium | Config ready, scripts pending |
 
 ---
 
 ## Contributing
 
-If you're interested in implementing any of these optimizations:
+If you're interested in implementing any of these:
 
 1. Open an issue to discuss the approach
-2. Start with a benchmark showing current performance
-3. Implement the optimization
-4. Add tests to verify correctness
-5. Submit PR with before/after benchmarks
+2. Reference existing implementations as guides
+3. Add tests to verify correctness
+4. Submit PR with documentation updates
 
-See existing SIMD and parallel implementations as reference.
+See existing GPU backends (`src/kernels/cuda/`, `src/kernels/metal/`) as reference implementations.

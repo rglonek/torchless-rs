@@ -5,6 +5,8 @@ Cross-platform GPU acceleration via OpenCL.
 **Impact:** SPEED++ (10-50x vs CPU)  
 **Platform:** Linux, macOS, Windows (any OpenCL-capable GPU)
 
+> **Note:** The OpenCL backend has full kernel implementations. However, `UnifiedTensor::to_device()` is not yet implemented—use `OpenCLBackend::to_device_1d/2d()` for explicit data transfer.
+
 ## Architecture
 
 ```

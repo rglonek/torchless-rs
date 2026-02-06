@@ -1,4 +1,4 @@
-# Library Usage
+# Library API
 
 Using torchless-rs as a Rust library.
 
@@ -70,6 +70,20 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
+### Dynamic Model Loading (Auto-Detect Architecture)
+
+```rust
+use torchless::{DynamicModel, InferenceState, Parameters};
+
+let params = Parameters::load("model.bin")?;
+let model = DynamicModel::load_auto(params)?;
+
+println!("Detected architecture: {}", model.architecture());
+
+let mut state = InferenceState::new(model.config().clone());
+model.forward(&mut state, token, false);
+```
+
 ## Tokenization
 
 ```rust
@@ -132,17 +146,17 @@ For custom operations, access tensors directly via `TensorView`:
 ```rust
 use torchless::{Parameters, TensorView, TensorDtype};
 
-let params = Parameters::load("mistral.bin")?;
+let params = Parameters::load("model.bin")?;
 
 // Get lazy tensor view (no copy)
 let view: TensorView = params.get_tensor_view("model.layers.0.self_attn.q_proj.weight")?;
 
 // Inspect tensor
 println!("Shape: {:?}", view.shape);
-println!("Dtype: {:?}", view.dtype); // F32 or Int8
+println!("Dtype: {:?}", view.dtype); // F32, F16, Int8, Int4, etc.
 println!("Rows: {}, Cols: {}", view.nrows(), view.ncols());
 
-// Access single row (dequantizes int8 on-demand)
+// Access single row (dequantizes on-demand)
 let row: Vec<f32> = view.get_row(0);
 
 // Matrix-vector multiplication (fused dequant + matmul)
@@ -168,21 +182,76 @@ let activated = fast_silu(&gate_output);
 let output = fast_matmul_vec(&weights, &input);
 ```
 
-## Feature-Specific APIs
+## Backend Selection
 
 ```rust
-// SIMD kernels (--features simd)
-#[cfg(feature = "simd")]
-use torchless::kernels::{rmsnorm_simd, softmax_simd, silu_simd};
+use torchless::{init_backend, BackendPreference, discover_backends, print_backend_summary};
 
-// Parallel kernels (--features parallel)
-#[cfg(feature = "parallel")]
-use torchless::kernels::{matmul_vec_parallel, compute_attention_scores_parallel};
+// Print available backends
+print_backend_summary();
+
+// Auto-select best available
+let backend = init_backend(BackendPreference::Auto)?;
+println!("Using: {}", backend.name());
+
+// Or explicitly request a backend
+let backend = init_backend(BackendPreference::Metal)?;
+
+// Use backend for operations
+let result = backend.matmul_vec(&weights, &input);
 ```
 
-## Configuration
+## Quantization
 
-Access model configuration:
+```rust
+use torchless::{QuantizedTensor, QuantFormat, MixedPrecisionConfig};
+
+// Quantize data
+let data: Vec<f32> = vec![...];
+let q4 = QuantizedTensor::from_f32(&data, vec![1024, 4096], QuantFormat::Q4_0);
+
+println!("Compression: {}x", q4.compression_ratio());
+
+// Mixed precision configuration
+let config = MixedPrecisionConfig::balanced(); // INT8 weights, FP16 activations
+```
+
+## Flash Attention
+
+```rust
+use torchless::{FlashAttentionConfig, flash_attention_multi_head};
+
+let config = FlashAttentionConfig::default();
+
+let output = flash_attention_multi_head(
+    &q_state,
+    k_cache.view(),
+    v_cache.view(),
+    n_heads,
+    n_kv_heads,
+    seq_len,
+    &config,
+);
+```
+
+## Speculative Decoding
+
+```rust
+use torchless::{SpeculativeDecoder, SpeculativeConfig};
+
+let config = SpeculativeConfig::default();
+
+let mut decoder = SpeculativeDecoder::new(
+    |state, token| main_model.forward(state, token, false),
+    |state, token| draft_model.forward(state, token, false),
+    config,
+);
+
+let accepted_tokens = decoder.generate_step(&mut main_state, &mut draft_state, context_token);
+println!("Acceptance rate: {:.1}%", decoder.stats().acceptance_rate() * 100.0);
+```
+
+## Configuration Access
 
 ```rust
 let params = Parameters::load("mistral.bin")?;

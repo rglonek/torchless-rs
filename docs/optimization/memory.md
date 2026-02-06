@@ -1,11 +1,6 @@
-# Phase 3.2: Memory Optimizations
+# Memory Optimization
 
-**Status**: Completed  
-**Impact**: SPEED+ (10-15% faster), RAM+ (reduced fragmentation)
-
-This phase implements memory-level optimizations including custom allocators, cache alignment, prefetching, and bounds check elimination for hot loops.
-
----
+Memory-level optimizations including custom allocators, cache alignment, prefetching, and bounds check elimination.
 
 ## Overview
 
@@ -15,13 +10,9 @@ Memory optimization is critical for LLM inference performance because:
 - Cache efficiency directly impacts throughput
 - Bounds checks add branch misprediction overhead in tight loops
 
----
+## Custom Memory Allocator
 
-## Implementation Summary
-
-### 1. Custom Memory Allocator (`src/memory/mod.rs`)
-
-#### Arena Allocator for Inference
+### Arena Allocator for Inference
 
 ```rust
 use torchless::memory::InferenceArena;
@@ -48,7 +39,7 @@ arena.reset();
 - Better cache locality (contiguous allocations)
 - 10-50x faster than standard allocation in forward passes
 
-#### Arena-Based Inference State
+### Arena-Based Inference State
 
 ```rust
 use torchless::ArenaInferenceState;
@@ -61,9 +52,9 @@ for token in tokens {
 }
 ```
 
-### 2. Cache-Aligned Buffers
+## Cache-Aligned Buffers
 
-#### AlignedBuffer
+### AlignedBuffer
 
 ```rust
 use torchless::memory::{AlignedBuffer, SIMD_ALIGNMENT};
@@ -81,9 +72,9 @@ let slice = buffer.as_slice();
 - `SIMD_ALIGNMENT = 64` - AVX-512 alignment requirement  
 - `CACHE_LINE_F32S = 16` - f32s per cache line
 
-### 3. Memory Prefetching
+## Memory Prefetching
 
-#### Prefetch Functions
+### Prefetch Functions
 
 ```rust
 use torchless::memory::{prefetch_read, prefetch_write, prefetch_sequential};
@@ -105,9 +96,9 @@ unsafe {
 - ARM/AArch64: Uses `_prefetch` intrinsic
 - Other: No-op fallback
 
-### 4. Bounds Check Elimination
+## Bounds Check Elimination
 
-#### Unchecked Operations Module
+### Unchecked Operations Module
 
 ```rust
 use torchless::memory::unchecked;
@@ -131,7 +122,7 @@ unsafe {
 }
 ```
 
-#### Optimized Kernel Building Blocks
+### Optimized Kernel Building Blocks
 
 ```rust
 use torchless::memory::{
@@ -152,9 +143,7 @@ unsafe {
 }
 ```
 
----
-
-## Optimized Kernels (`src/kernels/optimized.rs`)
+## Optimized Kernels
 
 High-level optimized kernel functions that use the memory optimizations:
 
@@ -181,21 +170,7 @@ softmax_optimized(&mut x);
 
 // SiLU activation
 let result = silu_optimized(&x);
-
-// Attention scores with prefetching
-compute_attention_scores_optimized(query.view(), keys.view(), &mut scores, scale, seq_len);
-
-// Fused attention (scores + softmax + weighted sum)
-fused_attention_optimized(query.view(), keys.view(), values.view(), scale, seq_len, &mut scores_buf, &mut output);
-
-// Fused SwiGLU with prefetching
-fused_swiglu_optimized(&x, &gate_proj, &up_proj, &mut output);
-
-// RoPE with unchecked access
-apply_rope_optimized(&mut x, &cos, &sin);
 ```
-
----
 
 ## Performance Characteristics
 
@@ -221,33 +196,6 @@ apply_rope_optimized(&mut x, &cos, &sin);
 |----------------|---------|---------------|-------------|
 | Sequential matmul | 1.00x | 0.90x | 10% |
 | Attention scores | 1.00x | 0.88x | 12% |
-
----
-
-## Files Added/Modified
-
-### New Files
-- `src/memory/mod.rs` - Memory optimization module (550+ lines)
-  - `AlignedBuffer<T>` - Cache-aligned buffer type
-  - `InferenceArena` - Arena allocator wrapper
-  - `prefetch_*` functions - Platform-specific prefetch hints
-  - `unchecked` module - Bounds-check-free operations
-  - Optimized building blocks (sum_squares, rmsnorm, softmax, etc.)
-
-- `src/kernels/optimized.rs` - Optimized kernel implementations (400+ lines)
-  - `matmul_vec_optimized` - With prefetching
-  - `rmsnorm_optimized`, `softmax_optimized`, `silu_optimized`
-  - `compute_attention_scores_optimized`
-  - `fused_attention_optimized`, `fused_swiglu_optimized`
-  - `apply_rope_optimized`
-
-### Modified Files
-- `Cargo.toml` - Added `bumpalo = "3.14"` dependency
-- `src/lib.rs` - Added exports for memory module and optimized kernels
-- `src/kernels/mod.rs` - Added optimized module and re-exports
-- `src/model/mod.rs` - Added `ArenaInferenceState` and `push_kv_optimized()`
-
----
 
 ## Usage Guidelines
 
@@ -287,37 +235,3 @@ unsafe {
     unchecked::load(slice, index)
 }
 ```
-
----
-
-## Testing
-
-All implementations include comprehensive unit tests:
-
-```bash
-# Run memory module tests
-cargo test memory::
-
-# Run optimized kernel tests  
-cargo test optimized::
-
-# Run all tests
-cargo test
-```
-
-Test coverage includes:
-- Aligned buffer creation and access
-- Arena allocation and reset
-- All unchecked operations
-- Optimized kernels vs reference implementations
-- Edge cases (empty inputs, single elements, non-aligned sizes)
-
----
-
-## Future Improvements
-
-Potential further optimizations:
-1. **NUMA-aware allocation** - Pin memory to specific NUMA nodes
-2. **Huge pages** - Use 2MB pages for large allocations
-3. **Memory pools for KV cache** - Reuse KV cache blocks across sequences
-4. **Custom SIMD prefetch patterns** - Tune prefetch distance per operation

@@ -72,19 +72,19 @@ cargo bench --features "simd,parallel"
 
 ### Benchmark Suites
 
-**matmul_bench** — Matrix multiplication:
+**matmul_bench** - Matrix multiplication:
 - Pure ndarray vs manual implementations
 - Pre-allocated vs allocating variants
 - Parallel variants (with `--features parallel`)
-- Sizes: 128×128 to 32000×4096
+- Sizes: 128x128 to 32000x4096
 
-**attention_bench** — Attention module:
+**attention_bench** - Attention module:
 - Score computation variants
 - Softmax implementations
 - Multi-head parallel processing
 - SIMD kernel comparisons
 
-**e2e_bench** — End-to-end:
+**e2e_bench** - End-to-end:
 - Single token forward pass
 - Sequence processing
 - Model component timing
@@ -138,10 +138,10 @@ cargo build --release
 
 ### Optimized Release
 
-The release profile is already configured with Link-Time Optimization (LTO):
+The release profile is configured with Link-Time Optimization (LTO):
 
 ```toml
-# Already in Cargo.toml
+# Cargo.toml
 [profile.release]
 lto = "fat"
 codegen-units = 1
@@ -186,7 +186,7 @@ RUSTFLAGS="-Cprofile-use=/tmp/pgo-data/merged.profdata" cargo build --release
 
 ### GPU Feature Builds
 
-Build with GPU support (when backends are implemented):
+Build with GPU support:
 
 ```bash
 # NVIDIA CUDA (Linux/Windows)
@@ -194,6 +194,9 @@ cargo build --release --features "cuda"
 
 # Apple Metal (macOS)
 cargo build --release --features "metal-gpu"
+
+# AMD ROCm (Linux)
+cargo build --release --features "rocm"
 
 # OpenCL (cross-platform)
 cargo build --release --features "opencl"
@@ -211,6 +214,24 @@ cargo build --release --features "cuda,simd,parallel"
 | `--release` + LTO | Slow | Better (+5-10%) |
 | `--release` + LTO + `target-cpu=native` | Slow | Best (+10-15%) |
 | `--release` + LTO + PGO | Very slow | Optimal (+15-25%) |
+
+## Running GPU Tests
+
+GPU tests are marked with `#[ignore]` and only run when hardware is available:
+
+```bash
+# CUDA tests
+cargo test --features cuda -- --ignored
+
+# Metal tests
+cargo test --features metal-gpu -- --ignored
+
+# ROCm tests
+cargo test --features rocm -- --ignored
+
+# OpenCL tests
+cargo test --features opencl -- --ignored
+```
 
 ## Contributing
 

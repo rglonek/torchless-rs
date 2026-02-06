@@ -1,15 +1,16 @@
-# Phase 8: Multi-Architecture Support
+# Model Architectures
 
-This document describes the implementation of Phase 8 from the optimization plan - support for multiple model architectures beyond Mistral.
+Support for multiple model architecture families beyond Mistral.
 
-## Overview
+## Supported Architectures
 
-Phase 8 adds support for loading and running inference on models from different architecture families:
-
-- **LLaMA** (Meta) - LLaMA 1, LLaMA 2, LLaMA 3
-- **Phi** (Microsoft) - Phi-2, Phi-3
-- **Gemma** (Google) - Gemma 1, Gemma 2
-- **Qwen** (Alibaba) - Qwen 1, Qwen 2
+| Architecture | Models | Status |
+|--------------|--------|--------|
+| **Mistral** | Mistral 7B | Fully supported |
+| **LLaMA** | LLaMA 1, 2, 3 | Supported |
+| **Phi** | Phi-2, Phi-3 | Supported |
+| **Gemma** | Gemma 1, 2 | Supported |
+| **Qwen** | Qwen 1, 2 | Supported |
 
 ## Architecture Detection
 
@@ -38,22 +39,7 @@ let arch = detect_architecture_from_tensors(&tensor_names);
 | Gemma | `*.post_feedforward_layernorm.*` |
 | Qwen | `transformer.h.*.attn.c_attn.*` |
 
-## New Types
-
-### ModelArchitecture Enum
-
-```rust
-pub enum ModelArchitecture {
-    Mistral,
-    LLaMA,
-    Phi,
-    Gemma,
-    Qwen,
-    Unknown,
-}
-```
-
-### Model Trait
+## Model Trait
 
 A unified interface for all model architectures:
 
@@ -68,7 +54,7 @@ pub trait Model: Send + Sync {
 }
 ```
 
-### DynamicModel Enum
+## DynamicModel
 
 Runtime polymorphism for model loading:
 
@@ -83,27 +69,7 @@ pub enum DynamicModel<'a> {
 }
 ```
 
-## Architecture Configurations
-
-### ArchitectureConfig
-
-Stores architecture-specific settings:
-
-```rust
-pub struct ArchitectureConfig {
-    pub architecture: ModelArchitecture,
-    pub tensor_names: TensorNamePattern,
-    pub tie_embeddings: bool,      // Gemma uses tied embeddings
-    pub fused_qkv: bool,           // Qwen fuses Q/K/V
-    pub fused_gate_up: bool,       // Phi fuses gate+up projection
-    pub rope_scaling: RopeScaling, // LLaMA 3 uses dynamic NTK
-    pub activation: ActivationType,
-    pub norm_type: NormType,
-    pub parallel_residual: bool,   // Phi uses parallel residuals
-}
-```
-
-### Architecture Comparison
+## Architecture Comparison
 
 | Feature | Mistral | LLaMA | Phi | Gemma | Qwen |
 |---------|---------|-------|-----|-------|------|
@@ -210,70 +176,21 @@ let model = ModelLoader::load_as("model.bin", ModelArchitecture::Phi)?;
   - `transformer.wte` instead of `model.embed_tokens`
   - `transformer.ln_f` instead of `model.norm`
 
-## File Structure
+## ArchitectureConfig
 
-```
-src/model/
-├── architecture.rs      # Architecture detection & config
-├── models/
-│   ├── mod.rs          # DynamicModel, ModelLoader
-│   ├── llama.rs        # LLaMA, LazyLLaMA
-│   ├── phi.rs          # Phi, LazyPhi, LayerNorm, PhiMLP
-│   ├── gemma.rs        # Gemma, LazyGemma, GemmaRMSNorm, GemmaMLP
-│   └── qwen.rs         # Qwen, LazyQwen, QwenAttention
-└── mod.rs              # Updated exports
-```
-
-## Exports
-
-All new types are exported from the library root:
+Stores architecture-specific settings:
 
 ```rust
-// Architecture detection
-pub use model::{
-    ModelArchitecture, Model, TensorNamePattern, ArchitectureConfig,
-    RopeScaling, ActivationType, NormType,
-    detect_architecture, detect_architecture_from_tensors,
-};
-
-// Model implementations
-pub use model::{
-    LLaMA, LazyLLaMA,
-    Phi, LazyPhi,
-    Gemma, LazyGemma,
-    Qwen, LazyQwen,
-    DynamicModel, ModelLoader,
-};
-```
-
-## Testing
-
-All architecture implementations include unit tests:
-
-```rust
-#[test]
-fn test_architecture_from_str() {
-    assert_eq!(ModelArchitecture::from_str("llama"), ModelArchitecture::LLaMA);
-    assert_eq!(ModelArchitecture::from_str("phi-3"), ModelArchitecture::Phi);
-}
-
-#[test]
-fn test_architecture_detection() {
-    let gemma_tensors = vec![
-        "model.layers.0.post_feedforward_layernorm.weight".to_string(),
-    ];
-    assert_eq!(
-        detect_architecture_from_tensors(&gemma_tensors),
-        ModelArchitecture::Gemma
-    );
-}
-
-#[test]
-fn test_phi_arch_config() {
-    let arch = ArchitectureConfig::phi();
-    assert!(arch.parallel_residual);
-    assert!(arch.fused_gate_up);
-    assert_eq!(arch.activation, ActivationType::GELUTanh);
+pub struct ArchitectureConfig {
+    pub architecture: ModelArchitecture,
+    pub tensor_names: TensorNamePattern,
+    pub tie_embeddings: bool,      // Gemma uses tied embeddings
+    pub fused_qkv: bool,           // Qwen fuses Q/K/V
+    pub fused_gate_up: bool,       // Phi fuses gate+up projection
+    pub rope_scaling: RopeScaling, // LLaMA 3 uses dynamic NTK
+    pub activation: ActivationType,
+    pub norm_type: NormType,
+    pub parallel_residual: bool,   // Phi uses parallel residuals
 }
 ```
 
@@ -286,10 +203,3 @@ fn test_phi_arch_config() {
   - Phi: Fused gate+up reduces memory bandwidth
   - Qwen: Fused QKV reduces projection overhead
   - Gemma: Tied embeddings save memory
-
-## Future Work
-
-- Add more architectures (Falcon, MPT, etc.)
-- Implement architecture-specific attention optimizations
-- Add quantization support for all architectures
-- Improve lazy loading with architecture-specific tensor access patterns

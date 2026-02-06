@@ -1,16 +1,8 @@
-# Phase 2: Quantization Implementation
+# Quantization
 
-This document describes the quantization support implemented in Phase 2, including FP16, INT4 (Q4_0, Q4_K_M, Q4_K_S), and mixed precision capabilities.
+Comprehensive quantization support for reduced memory usage while maintaining inference quality.
 
 ## Overview
-
-Phase 2 adds comprehensive quantization support to reduce memory usage while maintaining acceptable inference quality. The implementation provides:
-
-- **FP16/BF16**: 50% memory reduction with minimal quality loss
-- **INT8 (Q8_0)**: ~75% memory reduction with very good quality
-- **INT4 (Q4_0, Q4_K_M, Q4_K_S)**: ~87.5% memory reduction with good quality
-
-## Memory Savings
 
 | Format | Bytes/Element | Compression vs FP32 | Quality Impact |
 |--------|---------------|---------------------|----------------|
@@ -21,19 +13,6 @@ Phase 2 adds comprehensive quantization support to reduce memory usage while mai
 | Q4_0   | ~0.56         | ~7.1x               | Good           |
 | Q4_K_M | ~0.56         | ~7.1x               | Good+          |
 | Q4_K_S | ~0.54         | ~7.4x               | Good           |
-
-## File Structure
-
-```
-src/
-├── loader/
-│   ├── mod.rs           # Updated exports
-│   ├── parameters.rs    # Extended TensorDtype, TensorView with quantization
-│   └── quantization.rs  # NEW: Quantization block structures and utilities
-└── tensor/
-    ├── mod.rs           # Updated exports
-    └── storage.rs       # Extended with BF16, mixed precision config
-```
 
 ## Quantization Formats
 
@@ -91,9 +70,6 @@ weight[i] = nibble * (d * scale_bits) - (dmin * min_bits)
 ### Q4_K_S: K-Quantization (Small)
 
 Compact variant of Q4_K_M with reduced scale precision.
-
-**Super-block Structure (138 bytes for 256 weights):**
-- Same concept as Q4_K_M but with 6 bytes for scales/mins instead of 8
 
 ## API Usage
 
@@ -167,9 +143,7 @@ let memory_mb = config.estimate_memory_mb(params);
 println!("Estimated memory: {} MB", memory_mb);
 ```
 
-## Performance Characteristics
-
-### Fused Dequantize + MatMul
+## Fused Dequantize + MatMul
 
 The `TensorView::matmul_vec()` method fuses dequantization with matrix-vector multiplication, avoiding intermediate allocations:
 
@@ -187,7 +161,7 @@ This is critical for performance as:
 2. Quantized data is smaller, so less memory to read
 3. Dequantization happens in CPU registers during the dot product
 
-### Memory Layout
+## Memory Layout
 
 All quantization formats use row-major layout with block alignment:
 
@@ -199,33 +173,18 @@ Row 1: [Block 0][Block 1][Block 2]...
 
 This enables efficient sequential reads and cache utilization.
 
-## Testing
+## Memory Savings Summary
 
-The implementation includes comprehensive tests:
+| Configuration | 7B Model RAM |
+|---------------|--------------|
+| FP32 | ~28 GB |
+| FP16 | ~14 GB |
+| INT8 (Q8_0) | ~8 GB |
+| INT4 (Q4_0) | ~4 GB |
+| INT4 (Q4_K_M) | ~4 GB |
 
-```bash
-# Run quantization tests
-cargo test loader::quantization
+## GGUF Compatibility
 
-# Run all tests
-cargo test
-```
+The Q4_0 and Q8_0 formats are designed to be compatible with GGUF quantization. GGUF files can be loaded directly with automatic dequantization.
 
-Test coverage includes:
-- Roundtrip accuracy for all formats
-- Compression ratio verification
-- Block structure parsing
-- Fused matmul correctness
-
-## Compatibility Notes
-
-### GGUF Format
-
-The Q4_0 and Q8_0 formats are designed to be compatible with GGUF quantization. The Q4_K_M implementation uses a simplified packing scheme that is self-consistent but may differ slightly from the exact GGML layout.
-
-### Future Work
-
-- SIMD-optimized dequantization kernels (AVX-512, NEON)
-- GPU dequantization kernels
-- Additional formats: Q5_0, Q5_K_M, Q6_K
-- GGUF file format parser integration
+See [Model Formats](../formats/model-formats.md) for GGUF loading details.

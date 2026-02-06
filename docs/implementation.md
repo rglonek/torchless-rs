@@ -4,7 +4,7 @@ Technical documentation for torchless-rs internals.
 
 ## Binary Model Format
 
-The model uses the same binary format as the C++ Torchless implementation:
+The model uses a custom binary format:
 
 ```
 ┌─────────────────────────────────────┐
@@ -142,13 +142,13 @@ let params = Parameters::load("model.bin")?;
 let view: TensorView = params.get_tensor_view("layer.0.q_proj.weight")?;
 
 // Properties
-view.dtype    // TensorDtype::F32 or TensorDtype::Int8
+view.dtype    // TensorDtype::F32, F16, Int8, Int4, etc.
 view.shape    // [out_features, in_features]
 view.nrows()  // Output dimension
 view.ncols()  // Input dimension
 
 // Lazy operations
-let row: Vec<f32> = view.get_row(0);           // Single row, dequantizes int8
+let row: Vec<f32> = view.get_row(0);           // Single row, dequantizes
 let out: Vec<f32> = view.matmul_vec(&input);   // Fused dequant + matmul
 view.matmul_vec_into(&input, &mut output);     // Pre-allocated output
 ```
@@ -166,6 +166,8 @@ When built with `--features simd`, these operations use 8-wide vectorization:
 
 Auto-selecting wrappers (`fast_*`) choose the best available implementation.
 
+With AVX-512 support, operations use 16-wide vectorization for ~2x speedup on supported CPUs.
+
 ## Parallel Processing
 
 When built with `--features parallel`, these operations use Rayon:
@@ -176,24 +178,6 @@ When built with `--features parallel`, these operations use Rayon:
 | Attention scores | per-position loop | `compute_attention_scores_parallel()` |
 | Weighted sum | per-column loop | `weighted_sum_rows_parallel()` |
 | Attention heads | sequential | parallel head iteration |
-
-## Memory Profiling
-
-Run memory tests to verify allocation behavior:
-
-```bash
-cargo test --test memory_test --features parallel -- --nocapture
-```
-
-External profiling:
-
-```bash
-# Linux - Valgrind massif
-valgrind --tool=massif ./target/release/torchless model.bin "test"
-
-# Linux - heaptrack
-heaptrack cargo test --release
-```
 
 ## Build Optimizations
 

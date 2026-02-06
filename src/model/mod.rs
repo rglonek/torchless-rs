@@ -6,10 +6,37 @@ use ndarray::{Array1, Array2, Array4};
 pub mod modules;
 pub mod speculative;
 pub mod batching;
+pub mod architecture;
+pub mod models;
 #[cfg(feature = "parallel")]
 pub mod parallel;
 
 pub use modules::{Attention, Embedding, Layer, LazyAttention, LazyEmbedding, LazyLayer, LazyMLP, RMSNorm, MLP};
+
+// =============================================================================
+// Phase 8: Multi-Architecture Support
+// =============================================================================
+
+// Architecture detection and configuration
+pub use architecture::{
+    ModelArchitecture, Model, TensorNamePattern, ArchitectureConfig,
+    RopeScaling, ActivationType, NormType,
+    detect_architecture, detect_architecture_from_tensors, detect_architecture_from_config,
+};
+
+// Model implementations for different architectures
+pub use models::{
+    // LLaMA (Meta)
+    LLaMA, LazyLLaMA,
+    // Phi (Microsoft)
+    Phi, LazyPhi,
+    // Gemma (Google)
+    Gemma, LazyGemma,
+    // Qwen (Alibaba)
+    Qwen, LazyQwen,
+    // Dynamic model enum for runtime polymorphism
+    DynamicModel, ModelLoader,
+};
 
 // Flash Attention exports (Phase 4 Algorithmic Optimization)
 pub use modules::{

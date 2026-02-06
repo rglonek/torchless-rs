@@ -528,6 +528,13 @@ pub fn silu(x: &Array1<f32>) -> Array1<f32> {
     x.mapv(|v| v / (1.0 + (-v).exp()))
 }
 
+/// Scalar SiLU activation: x / (1 + exp(-x))
+/// Used for element-wise operations in lazy model implementations.
+#[inline]
+pub fn silu_scalar(x: f32) -> f32 {
+    x / (1.0 + (-x).exp())
+}
+
 /// RMSNorm: x * weight / sqrt(mean(x^2) + eps)
 pub fn rmsnorm(x: &mut Array1<f32>, weight: &Array1<f32>, eps: f32) {
     let squares: f32 = x.iter().map(|v| v * v).sum();

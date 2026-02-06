@@ -45,6 +45,31 @@ pub use loader::formats::safetensors::{
 // Model types
 pub use model::{ArenaInferenceState, InferenceState, LazyMistral, Mistral};
 
+// =============================================================================
+// Phase 8: Multi-Architecture Support
+// =============================================================================
+
+// Architecture detection and configuration
+pub use model::{
+    ModelArchitecture, Model, TensorNamePattern, ArchitectureConfig,
+    RopeScaling, ActivationType, NormType,
+    detect_architecture, detect_architecture_from_tensors, detect_architecture_from_config,
+};
+
+// Additional model architectures
+pub use model::{
+    // LLaMA (Meta) - LLaMA 1/2/3 support
+    LLaMA, LazyLLaMA,
+    // Phi (Microsoft) - Phi-2, Phi-3 support
+    Phi, LazyPhi,
+    // Gemma (Google) - Gemma 1/2 support
+    Gemma, LazyGemma,
+    // Qwen (Alibaba) - Qwen 1/2 support
+    Qwen, LazyQwen,
+    // Dynamic model for runtime architecture selection
+    DynamicModel, ModelLoader,
+};
+
 // Sampler functions
 pub use sampler::{generate, generate_lazy, sample_greedy, sample_multinomial};
 

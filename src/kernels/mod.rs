@@ -19,6 +19,10 @@ pub mod dispatch;
 // Optimized kernels with bounds check elimination and prefetching
 pub mod optimized;
 
+// Phase 6: Advanced parallelization (work distribution, pipeline, tensor parallelism)
+#[cfg(feature = "parallel")]
+pub mod parallel;
+
 // GPU backends
 #[cfg(feature = "cuda")]
 pub mod cuda;
@@ -790,4 +794,32 @@ pub use optimized::{
     fused_swiglu_optimized,
     // Optimized RoPE
     apply_rope_optimized,
+};
+
+// =============================================================================
+// Phase 6: Advanced Parallelization Re-exports
+// =============================================================================
+//
+// Work Distribution (6.1): Adaptive chunk sizes, work-stealing, NUMA awareness
+// Pipeline Parallelism (6.2): Overlapping layer computation
+// Tensor Parallelism (6.3): Column/row-parallel linear layers with all-reduce
+//
+
+#[cfg(feature = "parallel")]
+pub use parallel::{
+    // Work Distribution (6.1)
+    WorkDistributionConfig, WorkStealingStats, NumaHint, num_cpus,
+    matmul_vec_adaptive, matmul_vec_adaptive_into,
+    
+    // Pipeline Parallelism (6.2)
+    PipelineState, PipelineConfig,
+    
+    // Tensor Parallelism (6.3)
+    TensorParallelStrategy, TensorParallelConfig,
+    column_parallel_linear, row_parallel_linear,
+    all_reduce_sum, all_reduce_sum_inplace,
+    
+    // Parallel Attention and MLP with adaptive work distribution
+    attention_parallel_adaptive,
+    mlp_tensor_parallel,
 };

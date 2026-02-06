@@ -6,6 +6,8 @@ use ndarray::{Array1, Array2, Array4};
 pub mod modules;
 pub mod speculative;
 pub mod batching;
+#[cfg(feature = "parallel")]
+pub mod parallel;
 
 pub use modules::{Attention, Embedding, Layer, LazyAttention, LazyEmbedding, LazyLayer, LazyMLP, RMSNorm, MLP};
 
@@ -35,6 +37,14 @@ pub use batching::{
     BatchingConfig, BatchingStats, BatchScheduler,
     BatchedInferenceState, BatchStepResult, ContinuousBatchingEngine,
     KVCachePool, Sequence, SequenceId, SequenceStatus,
+};
+
+// Phase 6: Parallelization exports
+#[cfg(feature = "parallel")]
+pub use parallel::{
+    ParallelConfig, ParallelInferenceState,
+    ParallelAttention, ParallelMLP, ParallelLayer,
+    PipelineParallelMistral, TensorParallelMistral,
 };
 
 const MAX_SEQ_LEN: usize = 500;

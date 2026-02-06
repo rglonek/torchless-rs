@@ -128,3 +128,34 @@ pub use model::{
     BatchedInferenceState, BatchStepResult, ContinuousBatchingEngine,
     KVCachePool, Sequence, SequenceId, SequenceStatus,
 };
+
+// =============================================================================
+// Phase 6: Parallelization Improvements
+// =============================================================================
+
+// Advanced parallelization utilities (work distribution, pipeline, tensor parallelism)
+#[cfg(feature = "parallel")]
+pub use kernels::parallel::{
+    // Work Distribution (6.1)
+    WorkDistributionConfig, WorkStealingStats, NumaHint, num_cpus,
+    matmul_vec_adaptive, matmul_vec_adaptive_into,
+    
+    // Pipeline Parallelism (6.2)
+    PipelineState, PipelineConfig,
+    
+    // Tensor Parallelism (6.3)
+    TensorParallelStrategy, TensorParallelConfig,
+    column_parallel_linear, row_parallel_linear,
+    all_reduce_sum, all_reduce_sum_inplace,
+    
+    // Parallel Attention and MLP with adaptive work distribution
+    attention_parallel_adaptive, mlp_tensor_parallel,
+};
+
+// Parallel model implementations
+#[cfg(feature = "parallel")]
+pub use model::{
+    ParallelConfig, ParallelInferenceState,
+    ParallelAttention, ParallelMLP, ParallelLayer,
+    PipelineParallelMistral, TensorParallelMistral,
+};

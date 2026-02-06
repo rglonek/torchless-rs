@@ -103,6 +103,9 @@ pub enum Device {
     /// Apple Silicon GPU via Metal
     #[cfg(feature = "metal-gpu")]
     Metal,
+    /// AMD GPU via ROCm
+    #[cfg(feature = "rocm")]
+    Rocm(usize), // device index
     /// Cross-platform GPU via OpenCL
     #[cfg(feature = "opencl")]
     OpenCL(usize), // device index
@@ -116,6 +119,8 @@ impl fmt::Display for Device {
             Device::Cuda(idx) => write!(f, "cuda:{}", idx),
             #[cfg(feature = "metal-gpu")]
             Device::Metal => write!(f, "metal"),
+            #[cfg(feature = "rocm")]
+            Device::Rocm(idx) => write!(f, "rocm:{}", idx),
             #[cfg(feature = "opencl")]
             Device::OpenCL(idx) => write!(f, "opencl:{}", idx),
         }
@@ -189,6 +194,60 @@ impl CpuInt4Storage {
 }
 
 // =============================================================================
+// GPU Storage Wrapper Types
+// =============================================================================
+
+/// CUDA f32 storage (GPU).
+#[cfg(feature = "cuda")]
+#[derive(Clone)]
+pub struct CudaF32Storage {
+    pub tensor: crate::kernels::cuda::CudaTensor,
+    /// Device handle needed to copy data back to host in to_f32().
+    pub device: std::sync::Arc<cudarc::driver::CudaDevice>,
+}
+
+#[cfg(feature = "cuda")]
+impl std::fmt::Debug for CudaF32Storage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CudaF32Storage")
+            .field("tensor", &self.tensor)
+            .finish()
+    }
+}
+
+/// Metal f32 storage (GPU).
+#[cfg(feature = "metal-gpu")]
+#[derive(Debug, Clone)]
+pub struct MetalF32Storage {
+    pub tensor: crate::kernels::metal::MetalTensor,
+}
+
+/// ROCm f32 storage (GPU).
+#[cfg(feature = "rocm")]
+#[derive(Clone)]
+pub struct RocmF32Storage {
+    pub tensor: crate::kernels::rocm::RocmTensor,
+    /// Backend handle needed to copy data back to host in to_f32().
+    pub backend: std::sync::Arc<crate::kernels::rocm::RocmBackend>,
+}
+
+#[cfg(feature = "rocm")]
+impl std::fmt::Debug for RocmF32Storage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RocmF32Storage")
+            .field("tensor", &self.tensor)
+            .finish()
+    }
+}
+
+/// OpenCL f32 storage (GPU).
+#[cfg(feature = "opencl")]
+#[derive(Debug, Clone)]
+pub struct OpenCLF32Storage {
+    pub tensor: crate::kernels::opencl::OpenCLTensor,
+}
+
+// =============================================================================
 // Unified Tensor Storage
 // =============================================================================
 
@@ -205,11 +264,18 @@ pub enum TensorStorage {
     CpuInt8(CpuInt8Storage),
     /// CPU int4 quantized storage
     CpuInt4(CpuInt4Storage),
-    // GPU storage variants would be added here with their respective features
-    // #[cfg(feature = "cuda")]
-    // Cuda(CudaStorage),
-    // #[cfg(feature = "metal-gpu")]
-    // Metal(MetalStorage),
+    /// CUDA f32 storage (GPU)
+    #[cfg(feature = "cuda")]
+    CudaF32(CudaF32Storage),
+    /// Metal f32 storage (GPU)
+    #[cfg(feature = "metal-gpu")]
+    MetalF32(MetalF32Storage),
+    /// ROCm f32 storage (GPU)
+    #[cfg(feature = "rocm")]
+    RocmF32(RocmF32Storage),
+    /// OpenCL f32 storage (GPU)
+    #[cfg(feature = "opencl")]
+    OpenCLF32(OpenCLF32Storage),
 }
 
 impl TensorStorage {
@@ -221,6 +287,14 @@ impl TensorStorage {
             TensorStorage::CpuBF16(_) => Dtype::BF16,
             TensorStorage::CpuInt8(_) => Dtype::Int8,
             TensorStorage::CpuInt4(_) => Dtype::Int4,
+            #[cfg(feature = "cuda")]
+            TensorStorage::CudaF32(_) => Dtype::F32,
+            #[cfg(feature = "metal-gpu")]
+            TensorStorage::MetalF32(_) => Dtype::F32,
+            #[cfg(feature = "rocm")]
+            TensorStorage::RocmF32(_) => Dtype::F32,
+            #[cfg(feature = "opencl")]
+            TensorStorage::OpenCLF32(_) => Dtype::F32,
         }
     }
 
@@ -232,6 +306,14 @@ impl TensorStorage {
             | TensorStorage::CpuBF16(_)
             | TensorStorage::CpuInt8(_)
             | TensorStorage::CpuInt4(_) => Device::Cpu,
+            #[cfg(feature = "cuda")]
+            TensorStorage::CudaF32(_) => Device::Cuda(0),
+            #[cfg(feature = "metal-gpu")]
+            TensorStorage::MetalF32(_) => Device::Metal,
+            #[cfg(feature = "rocm")]
+            TensorStorage::RocmF32(_) => Device::Rocm(0),
+            #[cfg(feature = "opencl")]
+            TensorStorage::OpenCLF32(_) => Device::OpenCL(0),
         }
     }
 
@@ -243,6 +325,14 @@ impl TensorStorage {
             TensorStorage::CpuBF16(s) => s.data.len(),
             TensorStorage::CpuInt8(s) => s.data.len(),
             TensorStorage::CpuInt4(s) => s.data.len() * 2,
+            #[cfg(feature = "cuda")]
+            TensorStorage::CudaF32(s) => s.tensor.len(),
+            #[cfg(feature = "metal-gpu")]
+            TensorStorage::MetalF32(s) => s.tensor.len(),
+            #[cfg(feature = "rocm")]
+            TensorStorage::RocmF32(s) => s.tensor.len(),
+            #[cfg(feature = "opencl")]
+            TensorStorage::OpenCLF32(s) => s.tensor.len(),
         }
     }
 
@@ -360,7 +450,31 @@ impl TensorStorage {
                 }
                 result
             }
+            #[cfg(feature = "cuda")]
+            TensorStorage::CudaF32(s) => self
+                .cuda_to_f32(s)
+                .expect("Failed to copy CUDA tensor to host"),
+            #[cfg(feature = "metal-gpu")]
+            TensorStorage::MetalF32(s) => s.tensor.as_slice().to_vec(),
+            #[cfg(feature = "rocm")]
+            TensorStorage::RocmF32(s) => s
+                .backend
+                .copy_tensor_to_host(&s.tensor)
+                .expect("Failed to copy ROCm tensor to host"),
+            #[cfg(feature = "opencl")]
+            TensorStorage::OpenCLF32(s) => s
+                .tensor
+                .to_vec()
+                .expect("Failed to copy OpenCL tensor to host"),
         }
+    }
+
+    #[cfg(feature = "cuda")]
+    fn cuda_to_f32(&self, s: &CudaF32Storage) -> anyhow::Result<Vec<f32>> {
+        use cudarc::driver::DriverError;
+        s.device
+            .dtoh_sync_copy(s.tensor.data())
+            .map_err(|e: DriverError| anyhow::anyhow!("CUDA copy failed: {:?}", e))
     }
 
     /// Get as f32 slice (only valid for CpuF32 storage).
@@ -555,6 +669,14 @@ impl UnifiedTensor {
             TensorStorage::CpuBF16(s) => s.data.len() * 2,
             TensorStorage::CpuInt8(s) => s.data.len() + s.scales.len() * 4,
             TensorStorage::CpuInt4(s) => s.data.len() + s.scales.len() * 4,
+            #[cfg(feature = "cuda")]
+            TensorStorage::CudaF32(s) => s.tensor.memory_bytes(),
+            #[cfg(feature = "metal-gpu")]
+            TensorStorage::MetalF32(s) => s.tensor.memory_bytes(),
+            #[cfg(feature = "rocm")]
+            TensorStorage::RocmF32(s) => s.tensor.memory_bytes(),
+            #[cfg(feature = "opencl")]
+            TensorStorage::OpenCLF32(s) => s.tensor.memory_bytes(),
         }
     }
 
@@ -752,22 +874,96 @@ pub trait DeviceTransfer {
 
 impl DeviceTransfer for UnifiedTensor {
     fn to_device(&self, device: Device) -> anyhow::Result<UnifiedTensor> {
+        if self.device() == device {
+            return Ok(self.clone());
+        }
         match device {
             Device::Cpu => {
-                // Already on CPU or convert to CPU
-                Ok(self.clone())
+                let f32_data = self.storage.to_f32();
+                let storage = TensorStorage::from_f32(f32_data);
+                Ok(UnifiedTensor::new(storage, self.shape.clone()))
             }
             #[cfg(feature = "cuda")]
-            Device::Cuda(_) => {
-                anyhow::bail!("CUDA device transfer not yet implemented")
+            Device::Cuda(device_idx) => {
+                use crate::kernels::cuda::CudaBackend;
+                let backend = CudaBackend::with_device(device_idx)?;
+                let f32_data = self.storage.to_f32();
+                let tensor = if self.ndim() == 1 {
+                    let arr = ndarray::Array1::from_vec(f32_data);
+                    backend.to_device_1d(&arr)?
+                } else {
+                    let size: usize = self.shape[1..].iter().product();
+                    let arr = ndarray::Array2::from_shape_vec(
+                        (self.shape[0], size),
+                        f32_data,
+                    )?;
+                    backend.to_device_2d(&arr)?
+                };
+                let storage = TensorStorage::CudaF32(CudaF32Storage {
+                    tensor,
+                    device: backend.device().clone(),
+                });
+                Ok(UnifiedTensor::new(storage, self.shape.clone()))
             }
             #[cfg(feature = "metal-gpu")]
             Device::Metal => {
-                anyhow::bail!("Metal device transfer not yet implemented")
+                use crate::kernels::metal::MetalBackend;
+                let backend = MetalBackend::new()?;
+                let f32_data = self.storage.to_f32();
+                let tensor = if self.ndim() == 1 {
+                    let arr = ndarray::Array1::from_vec(f32_data);
+                    backend.to_device_1d(&arr)?
+                } else {
+                    let size: usize = self.shape[1..].iter().product();
+                    let arr = ndarray::Array2::from_shape_vec(
+                        (self.shape[0], size),
+                        f32_data,
+                    )?;
+                    backend.to_device_2d(&arr)?
+                };
+                let storage = TensorStorage::MetalF32(MetalF32Storage { tensor });
+                Ok(UnifiedTensor::new(storage, self.shape.clone()))
+            }
+            #[cfg(feature = "rocm")]
+            Device::Rocm(device_idx) => {
+                use crate::kernels::rocm::RocmBackend;
+                let backend = RocmBackend::with_device(device_idx)?;
+                let f32_data = self.storage.to_f32();
+                let tensor = if self.ndim() == 1 {
+                    let arr = ndarray::Array1::from_vec(f32_data);
+                    backend.to_device_1d(&arr)?
+                } else {
+                    let size: usize = self.shape[1..].iter().product();
+                    let arr = ndarray::Array2::from_shape_vec(
+                        (self.shape[0], size),
+                        f32_data,
+                    )?;
+                    backend.to_device_2d(&arr)?
+                };
+                let storage = TensorStorage::RocmF32(RocmF32Storage {
+                    tensor,
+                    backend: std::sync::Arc::new(backend),
+                });
+                Ok(UnifiedTensor::new(storage, self.shape.clone()))
             }
             #[cfg(feature = "opencl")]
-            Device::OpenCL(_) => {
-                anyhow::bail!("OpenCL device transfer not yet implemented")
+            Device::OpenCL(device_idx) => {
+                use crate::kernels::opencl::OpenCLBackend;
+                let backend = OpenCLBackend::with_device_index(device_idx)?;
+                let f32_data = self.storage.to_f32();
+                let tensor = if self.ndim() == 1 {
+                    let arr = ndarray::Array1::from_vec(f32_data);
+                    backend.to_device_1d(&arr)?
+                } else {
+                    let size: usize = self.shape[1..].iter().product();
+                    let arr = ndarray::Array2::from_shape_vec(
+                        (self.shape[0], size),
+                        f32_data,
+                    )?;
+                    backend.to_device_2d(&arr)?
+                };
+                let storage = TensorStorage::OpenCLF32(OpenCLF32Storage { tensor });
+                Ok(UnifiedTensor::new(storage, self.shape.clone()))
             }
         }
     }
@@ -875,5 +1071,69 @@ mod tests {
 
         let f16_tensor = UnifiedTensor::from_f32_as_f16(data.clone(), vec![4]);
         assert_eq!(f16_tensor.memory_bytes(), 8); // 4 * 2 bytes
+    }
+
+    // GPU device transfer round-trip tests. Run with e.g.:
+    //   cargo test --features cuda test_device_transfer_cuda -- --ignored
+    // These are ignored by default so that `cargo test` does not require GPU hardware.
+
+    #[test]
+    #[cfg(feature = "cuda")]
+    #[ignore = "requires CUDA GPU; run with cargo test --features cuda -- --ignored"]
+    fn test_device_transfer_cuda() {
+        use super::DeviceTransfer;
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let tensor = UnifiedTensor::from_f32(data.clone(), vec![4]);
+
+        let gpu_tensor = tensor.to_device(Device::Cuda(0)).unwrap();
+        assert_eq!(gpu_tensor.device(), Device::Cuda(0));
+
+        let cpu_tensor = gpu_tensor.to_cpu().unwrap();
+        assert_eq!(cpu_tensor.storage.to_f32(), data);
+    }
+
+    #[test]
+    #[cfg(feature = "metal-gpu")]
+    #[ignore = "requires Metal GPU; run with cargo test --features metal-gpu -- --ignored"]
+    fn test_device_transfer_metal() {
+        use super::DeviceTransfer;
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let tensor = UnifiedTensor::from_f32(data.clone(), vec![4]);
+
+        let gpu_tensor = tensor.to_device(Device::Metal).unwrap();
+        assert_eq!(gpu_tensor.device(), Device::Metal);
+
+        let cpu_tensor = gpu_tensor.to_cpu().unwrap();
+        assert_eq!(cpu_tensor.storage.to_f32(), data);
+    }
+
+    #[test]
+    #[cfg(feature = "rocm")]
+    #[ignore = "requires ROCm GPU; run with cargo test --features rocm -- --ignored"]
+    fn test_device_transfer_rocm() {
+        use super::DeviceTransfer;
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let tensor = UnifiedTensor::from_f32(data.clone(), vec![4]);
+
+        let gpu_tensor = tensor.to_device(Device::Rocm(0)).unwrap();
+        assert_eq!(gpu_tensor.device(), Device::Rocm(0));
+
+        let cpu_tensor = gpu_tensor.to_cpu().unwrap();
+        assert_eq!(cpu_tensor.storage.to_f32(), data);
+    }
+
+    #[test]
+    #[cfg(feature = "opencl")]
+    #[ignore = "requires OpenCL; run with cargo test --features opencl -- --ignored"]
+    fn test_device_transfer_opencl() {
+        use super::DeviceTransfer;
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let tensor = UnifiedTensor::from_f32(data.clone(), vec![4]);
+
+        let gpu_tensor = tensor.to_device(Device::OpenCL(0)).unwrap();
+        assert_eq!(gpu_tensor.device(), Device::OpenCL(0));
+
+        let cpu_tensor = gpu_tensor.to_cpu().unwrap();
+        assert_eq!(cpu_tensor.storage.to_f32(), data);
     }
 }

@@ -125,6 +125,13 @@ impl RocmTensor {
     pub fn memory_bytes(&self) -> usize {
         self.len * std::mem::size_of::<f32>()
     }
+
+    /// Copy data from GPU to host.
+    ///
+    /// Requires a reference to the ROCm backend to perform the copy.
+    pub fn to_vec(&self, backend: &super::RocmBackend) -> anyhow::Result<Vec<f32>> {
+        backend.copy_tensor_to_host(self)
+    }
 }
 
 impl std::fmt::Debug for RocmTensor {

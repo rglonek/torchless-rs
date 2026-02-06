@@ -577,6 +577,14 @@ impl RocmBackend {
         Ok(())
     }
 
+    /// Copy tensor data from GPU to host as a Vec.
+    #[cfg(feature = "rocm")]
+    pub fn copy_tensor_to_host(&self, tensor: &RocmTensor) -> anyhow::Result<Vec<f32>> {
+        let mut data = vec![0.0f32; tensor.len()];
+        self.copy_to_host(tensor.data(), &mut data)?;
+        Ok(data)
+    }
+
     /// Allocate zero-initialized GPU memory.
     #[cfg(feature = "rocm")]
     pub fn alloc_zeros(&self, len: usize) -> anyhow::Result<HipSlice<f32>> {

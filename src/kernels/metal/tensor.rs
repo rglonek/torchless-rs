@@ -144,6 +144,11 @@ impl MetalTensor {
             std::slice::from_raw_parts_mut(self.buffer.contents() as *mut f32, self.len)
         }
     }
+
+    /// Copy data to a new Vec (unified memory, so this is a direct copy).
+    pub fn to_vec(&self) -> Vec<f32> {
+        self.as_slice().to_vec()
+    }
 }
 
 impl std::fmt::Debug for MetalTensor {

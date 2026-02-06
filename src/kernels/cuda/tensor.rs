@@ -3,6 +3,7 @@
 //! This module provides GPU tensor types that wrap CUDA device memory.
 
 use cudarc::driver::CudaSlice;
+use std::sync::Arc;
 
 /// A tensor stored on CUDA device memory.
 ///
@@ -124,6 +125,15 @@ impl CudaTensor {
     /// Get the memory size in bytes.
     pub fn memory_bytes(&self) -> usize {
         self.len * std::mem::size_of::<f32>()
+    }
+
+    /// Copy data from GPU to host.
+    ///
+    /// Requires a reference to the CUDA device (as `Arc<CudaDevice>`) that owns this tensor's memory.
+    pub fn to_vec(&self, device: &Arc<cudarc::driver::CudaDevice>) -> anyhow::Result<Vec<f32>> {
+        device
+            .dtoh_sync_copy(&self.data)
+            .map_err(|e| anyhow::anyhow!("CUDA copy failed: {:?}", e))
     }
 }
 

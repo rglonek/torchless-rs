@@ -920,7 +920,7 @@ fn discover_cuda() -> BackendInfo {
     match CudaDevice::count() {
         Ok(count) if count > 0 => {
             available = true;
-            for i in 0..count {
+            for i in 0..(count as usize) {
                 match CudaDevice::new(i) {
                     Ok(device) => {
                         // Get device properties
@@ -1041,33 +1041,32 @@ fn discover_opencl() -> BackendInfo {
     let mut available = false;
 
     // Enumerate all platforms and devices
-    if let Ok(platforms) = Platform::list() {
-        let mut device_index = 0;
-        for platform in platforms {
-            if let Ok(platform_devices) = OclDevice::list_all(&platform) {
-                for device in platform_devices {
-                    available = true;
-                    
-                    let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
-                    let total_memory = device
-                        .info(ocl::enums::DeviceInfo::GlobalMemSize)
-                        .ok()
-                        .and_then(|info| match info {
-                            ocl::enums::DeviceInfoResult::GlobalMemSize(size) => Some(size as usize),
-                            _ => None,
-                        })
-                        .unwrap_or(0);
+    let platforms = Platform::list();
+    let mut device_index = 0;
+    for platform in platforms {
+        if let Ok(platform_devices) = OclDevice::list_all(&platform) {
+            for device in platform_devices {
+                available = true;
 
-                    devices.push(DeviceInfo {
-                        index: device_index,
-                        name,
-                        total_memory,
-                        free_memory: None,
-                        compute_capability: None,
-                        unified_memory: false,
-                    });
-                    device_index += 1;
-                }
+                let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+                let total_memory = device
+                    .info(ocl::enums::DeviceInfo::GlobalMemSize)
+                    .ok()
+                    .and_then(|info| match info {
+                        ocl::enums::DeviceInfoResult::GlobalMemSize(size) => Some(size as usize),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+
+                devices.push(DeviceInfo {
+                    index: device_index,
+                    name,
+                    total_memory,
+                    free_memory: None,
+                    compute_capability: None,
+                    unified_memory: false,
+                });
+                device_index += 1;
             }
         }
     }

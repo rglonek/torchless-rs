@@ -15,6 +15,7 @@ Complete documentation for torchless-rs, a Rust LLM inference engine.
 - [Model Architectures](architecture/model-architectures.md) - Supported model families (LLaMA, Phi, Gemma, Qwen)
 
 ### Optimization
+- [Build Optimization](optimization/build.md) - LTO, PGO, build scripts, release automation
 - [Quantization](optimization/quantization.md) - FP16, INT8, INT4 support
 - [SIMD Kernels](optimization/simd.md) - AVX-512, ARM NEON, runtime dispatch
 - [Memory Optimization](optimization/memory.md) - Arena allocators, cache alignment, prefetching

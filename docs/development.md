@@ -168,7 +168,7 @@ PGO can provide 10-15% additional performance improvements. Use the provided scr
 
 ```bash
 # Automated PGO build (recommended)
-MODEL_PATH=/path/to/model.bin ./scripts/pgo-build.sh
+MODEL_PATH=/path/to/model.bin ./scripts/build_pgo.sh
 
 # Manual PGO build
 # Step 1: Build with profiling instrumentation

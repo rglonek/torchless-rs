@@ -22,7 +22,27 @@ cargo build --release
 ./target/release/torchless mistral.bin "Paris is the capital of"
 ```
 
-### Optimized Build
+### Build Scripts
+
+Use the provided build scripts for easy configuration:
+
+```bash
+# Simple build with defaults (simd, parallel)
+./scripts/build.sh
+
+# Build with GPU support
+./scripts/build.sh --cuda          # NVIDIA
+./scripts/build.sh --metal         # Apple Silicon
+./scripts/build.sh --rocm          # AMD
+
+# Build with PGO for 5-15% speedup
+./scripts/build.sh --pgo
+
+# Build all release flavors
+./scripts/build_releases.sh
+```
+
+### Manual Build
 
 | Platform | Command |
 |----------|---------|
@@ -69,6 +89,7 @@ cargo build --release
 ### Optimization
 | Topic | Description |
 |-------|-------------|
+| [Build Optimization](docs/optimization/build.md) | LTO, PGO, build scripts |
 | [Quantization](docs/optimization/quantization.md) | FP16, INT8, INT4 formats |
 | [SIMD Kernels](docs/optimization/simd.md) | AVX-512, ARM NEON |
 | [Memory](docs/optimization/memory.md) | Allocators, prefetching |

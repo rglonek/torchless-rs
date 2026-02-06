@@ -18,23 +18,52 @@ cargo build --release
 ## Basic Usage
 
 ```bash
-./target/release/torchless <model_path> "<prompt>"
+./target/release/torchless [OPTIONS] <model_path> "<prompt>"
 
-# Examples
+# Basic examples
 ./target/release/torchless mistral.bin "The quick brown fox"
-./target/release/torchless --debug mistral.bin "Hello"  # verbose output
+./target/release/torchless model.gguf "Hello"  # GGUF auto-detected
+
+# Backend selection (when built with multiple GPU backends)
+./target/release/torchless --backend auto model.bin "Hello"    # Auto-select best
+./target/release/torchless --backend cuda model.bin "Hello"    # Force CUDA
+./target/release/torchless --backend opencl model.bin "Hello"  # Force OpenCL
+./target/release/torchless --backend cpu model.bin "Hello"     # Force CPU
+
+# List available backends
+./target/release/torchless --list-backends
+
+# Additional options
+./target/release/torchless --max-tokens 100 model.bin "Once upon a time"
+./target/release/torchless --temperature 0.7 model.bin "Creative writing:"
+./target/release/torchless --debug model.bin "Hello"  # Verbose output
 ```
 
 ## Optimized Builds
 
+### Using Build Scripts (Recommended)
+
+```bash
+# Build with all GPU backends for your platform (recommended)
+./scripts/build.sh --gpu
+
+# Build CPU-only (smaller binary)
+./scripts/build.sh --cpu-only
+
+# Build release binaries
+./scripts/build_releases.sh
+```
+
+### Manual Build
+
 | Platform | Command |
 |----------|---------|
-| macOS | `cargo build --release --features "simd,parallel,accelerate"` |
-| Linux | `cargo build --release --features "simd,parallel,openblas"` |
-| Linux (AMD) | `cargo build --release --features "simd,parallel,blis"` |
-| NVIDIA GPU | `cargo build --release --features "cuda,simd,parallel"` |
-| Apple Silicon GPU | `cargo build --release --features "metal-gpu,simd,parallel"` |
-| AMD GPU | `cargo build --release --features "rocm,simd,parallel"` |
+| macOS (CPU) | `cargo build --release --features "simd,parallel,accelerate"` |
+| macOS (GPU) | `cargo build --release --features "metal-gpu,opencl,simd,parallel,accelerate"` |
+| Linux (CPU) | `cargo build --release --features "simd,parallel"` |
+| Linux (GPU) | `cargo build --release --features "cuda,rocm,opencl,simd,parallel"` |
+
+**Note**: Build with multiple GPU backends and select at runtime via `--backend`.
 
 ## Feature Flags
 

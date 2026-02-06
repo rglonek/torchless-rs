@@ -1,12 +1,16 @@
 #!/bin/bash
 #
-# Build multiple release flavors of torchless for distribution.
-# Creates binaries for different platforms and GPU backends.
+# Build release flavors of torchless for distribution.
+# Creates multi-backend binaries to minimize the number of releases.
+#
+# Flavors:
+#   - cpu: CPU-only (smallest binary, most portable)
+#   - gpu: All GPU backends for the platform compiled in (user selects at runtime)
 #
 # Usage:
 #   ./scripts/build_releases.sh [OPTIONS]
 #   ./scripts/build_releases.sh --platforms linux-x86_64,macos-aarch64
-#   ./scripts/build_releases.sh --flavors cpu,cuda,metal
+#   ./scripts/build_releases.sh --flavors cpu
 #
 # See --help for all options.
 
@@ -36,7 +40,6 @@ log_step()  { echo -e "${CYAN}[RELEASE]${NC} ${BOLD}$1${NC}"; }
 # Default Configuration
 # =============================================================================
 
-# Detect host for determining which platforms we can build
 detect_host() {
     local os arch
     case "$(uname -s)" in
@@ -56,12 +59,10 @@ detect_host() {
 HOST_TARGET=$(detect_host)
 HOST_OS="${HOST_TARGET%-*}"
 
-# Default: build for host platform only (cross-compilation requires setup)
 PLATFORMS="${PLATFORMS:-$HOST_TARGET}"
-FLAVORS="${FLAVORS:-all}"
+FLAVORS="${FLAVORS:-cpu,gpu}"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/releases}"
 VERSION="${VERSION:-$(grep '^version' "$PROJECT_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')}"
-PARALLEL="${PARALLEL:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 CLEAN="${CLEAN:-false}"
 
@@ -73,7 +74,8 @@ show_help() {
     cat <<EOF
 ${BOLD}torchless Release Builder${NC}
 
-Builds multiple release variants of torchless for distribution.
+Builds release binaries with multi-backend support.
+Users select the backend at runtime with --backend flag.
 
 Usage: $0 [OPTIONS]
 
@@ -82,56 +84,60 @@ ${BOLD}Platform Options:${NC}
                           Available: linux-x86_64, linux-aarch64,
                                      macos-x86_64, macos-aarch64,
                                      windows-x86_64
-  --all-platforms         Build for all platforms (requires cross-compilation setup)
+  --all-platforms         Build for all platforms (requires cross-compilation)
   --host-only             Build only for current host (default)
 
 ${BOLD}Flavor Options:${NC}
-  --flavors FLAVORS       Comma-separated GPU flavors (default: all)
-                          Available: cpu, cuda, rocm, metal, opencl, all
-  --cpu-only              Build CPU-only flavor
-  --gpu-all               Build all GPU flavors for each platform
+  --flavors FLAVORS       Comma-separated flavors (default: cpu,gpu)
+                          cpu - CPU only (smaller, portable)
+                          gpu - All GPU backends for platform
+  --cpu-only              Build only CPU flavor
+  --gpu-only              Build only GPU flavor
+  --all                   Build both cpu and gpu flavors (default)
 
 ${BOLD}Output Options:${NC}
   --output-dir DIR        Output directory (default: releases/)
   --version VERSION       Version string for naming (default: from Cargo.toml)
   --clean                 Clean output directory before building
 
-${BOLD}Build Options:${NC}
-  --parallel              Build flavors in parallel (experimental)
-  --dry-run               Show what would be built without building
-
 ${BOLD}Other:${NC}
+  --dry-run               Show what would be built without building
   -h, --help              Show this help
 
-${BOLD}Platform/Flavor Matrix:${NC}
-  linux-x86_64:   cpu, cuda, rocm, opencl
-  linux-aarch64:  cpu, opencl
-  macos-x86_64:   cpu, opencl
-  macos-aarch64:  cpu, metal, opencl
-  windows-x86_64: cpu, cuda, opencl
+${BOLD}GPU Backends per Platform:${NC}
+  linux-x86_64:   cuda, rocm, opencl
+  linux-aarch64:  opencl
+  macos-x86_64:   opencl
+  macos-aarch64:  metal, opencl
+  windows-x86_64: cuda, opencl
+
+${BOLD}Runtime Backend Selection:${NC}
+  The GPU flavor includes all available backends. Users select at runtime:
+
+    ./torchless --backend auto model.bin "prompt"     # Auto-select best
+    ./torchless --backend cuda model.bin "prompt"     # Force CUDA
+    ./torchless --backend opencl model.bin "prompt"   # Force OpenCL
+    ./torchless --list-backends                       # Show available
 
 ${BOLD}Examples:${NC}
-  # Build all flavors for current host
+  # Build both cpu and gpu for current host
   $0
+
+  # Build GPU-only for Linux
+  $0 --platforms linux-x86_64 --gpu-only
 
   # Build CPU-only for all platforms
   $0 --all-platforms --cpu-only
 
-  # Build Linux CUDA and ROCm releases
-  $0 --platforms linux-x86_64 --flavors cuda,rocm
-
-  # Build macOS releases with Metal
-  $0 --platforms macos-aarch64 --flavors cpu,metal
-
-  # Preview all builds
+  # Preview builds
   $0 --all-platforms --dry-run
 
 ${BOLD}Output Structure:${NC}
   releases/
-  ├── torchless-${VERSION}-linux-x86_64-cpu
-  ├── torchless-${VERSION}-linux-x86_64-cuda
-  ├── torchless-${VERSION}-macos-aarch64-cpu
-  ├── torchless-${VERSION}-macos-aarch64-metal
+  ├── torchless-${VERSION}-linux-x86_64-cpu      # CPU only
+  ├── torchless-${VERSION}-linux-x86_64-gpu      # CUDA + ROCm + OpenCL
+  ├── torchless-${VERSION}-macos-aarch64-cpu     # CPU only  
+  ├── torchless-${VERSION}-macos-aarch64-gpu     # Metal + OpenCL
   └── ...
 EOF
 }
@@ -154,16 +160,16 @@ parse_args() {
                 FLAVORS="$2"; shift 2 ;;
             --cpu-only)
                 FLAVORS="cpu"; shift ;;
-            --gpu-all)
-                FLAVORS="all"; shift ;;
+            --gpu-only)
+                FLAVORS="gpu"; shift ;;
+            --all)
+                FLAVORS="cpu,gpu"; shift ;;
             --output-dir)
                 OUTPUT_DIR="$2"; shift 2 ;;
             --version)
                 VERSION="$2"; shift 2 ;;
             --clean)
                 CLEAN=true; shift ;;
-            --parallel)
-                PARALLEL=true; shift ;;
             --dry-run)
                 DRY_RUN=true; shift ;;
             -h|--help)
@@ -180,43 +186,54 @@ parse_args() {
 # Configuration Functions
 # =============================================================================
 
-# Get available flavors for a given platform
-get_platform_flavors() {
+# Get GPU features for a given platform
+get_gpu_features() {
     local platform="$1"
+    local base="simd,parallel"
+    
     case "$platform" in
         linux-x86_64)
-            echo "cpu cuda rocm opencl" ;;
+            echo "${base},cuda,rocm,opencl" ;;
         linux-aarch64)
-            echo "cpu opencl" ;;
+            echo "${base},opencl" ;;
         macos-x86_64)
-            echo "cpu opencl" ;;
+            echo "${base},opencl,accelerate" ;;
         macos-aarch64)
-            echo "cpu metal opencl" ;;
+            echo "${base},metal-gpu,opencl,accelerate" ;;
         windows-x86_64)
-            echo "cpu cuda opencl" ;;
+            echo "${base},cuda,opencl" ;;
         *)
-            echo "cpu" ;;
+            echo "${base}" ;;
+    esac
+}
+
+# Get CPU features for a given platform
+get_cpu_features() {
+    local platform="$1"
+    local base="simd,parallel"
+    
+    case "$platform" in
+        macos-*)
+            echo "${base},accelerate" ;;
+        linux-*)
+            echo "${base}" ;;
+        *)
+            echo "${base}" ;;
     esac
 }
 
 # Convert flavor to cargo features
 flavor_to_features() {
-    local flavor="$1"
-    local base_features="simd,parallel"
+    local platform="$1"
+    local flavor="$2"
     
     case "$flavor" in
         cpu)
-            echo "$base_features" ;;
-        cuda)
-            echo "$base_features,cuda" ;;
-        rocm)
-            echo "$base_features,rocm" ;;
-        metal)
-            echo "$base_features,metal-gpu" ;;
-        opencl)
-            echo "$base_features,opencl" ;;
+            get_cpu_features "$platform" ;;
+        gpu)
+            get_gpu_features "$platform" ;;
         *)
-            echo "$base_features" ;;
+            get_cpu_features "$platform" ;;
     esac
 }
 
@@ -231,6 +248,35 @@ get_output_name() {
     echo "torchless-${VERSION}-${platform}-${flavor}${ext}"
 }
 
+# Get description for flavor
+get_flavor_description() {
+    local platform="$1"
+    local flavor="$2"
+    
+    case "$flavor" in
+        cpu)
+            echo "CPU only (simd+parallel)" ;;
+        gpu)
+            case "$platform" in
+                linux-x86_64)
+                    echo "GPU (cuda+rocm+opencl)" ;;
+                linux-aarch64)
+                    echo "GPU (opencl)" ;;
+                macos-x86_64)
+                    echo "GPU (opencl)" ;;
+                macos-aarch64)
+                    echo "GPU (metal+opencl)" ;;
+                windows-x86_64)
+                    echo "GPU (cuda+opencl)" ;;
+                *)
+                    echo "GPU" ;;
+            esac
+            ;;
+        *)
+            echo "$flavor" ;;
+    esac
+}
+
 # =============================================================================
 # Build Functions
 # =============================================================================
@@ -238,15 +284,16 @@ get_output_name() {
 build_flavor() {
     local platform="$1"
     local flavor="$2"
-    local features output_name
+    local features output_name description
     
-    features=$(flavor_to_features "$flavor")
+    features=$(flavor_to_features "$platform" "$flavor")
     output_name=$(get_output_name "$platform" "$flavor")
+    description=$(get_flavor_description "$platform" "$flavor")
     
     log_step "Building: $output_name"
-    log_info "  Platform: $platform"
-    log_info "  Flavor:   $flavor"
-    log_info "  Features: $features"
+    log_info "  Platform:    $platform"
+    log_info "  Flavor:      $flavor - $description"
+    log_info "  Features:    $features"
     
     if [ "$DRY_RUN" = true ]; then
         log_info "  [DRY RUN - skipping actual build]"
@@ -256,11 +303,10 @@ build_flavor() {
     # Check if we can build this platform
     local can_build=true
     if [ "$platform" != "$HOST_TARGET" ]; then
-        # Cross-compilation check
         local target_os="${platform%-*}"
         if [ "$target_os" != "$HOST_OS" ]; then
-            log_warn "  Skipping: cross-OS compilation requires additional setup"
-            log_warn "  (Building $platform from $HOST_TARGET)"
+            log_warn "  Skipping: cross-OS compilation not supported"
+            log_warn "  (Cannot build $platform from $HOST_TARGET)"
             can_build=false
         fi
     fi
@@ -304,25 +350,11 @@ main() {
     IFS=',' read -ra flavor_array <<< "$FLAVORS"
     
     for platform in "${platform_array[@]}"; do
-        platform=$(echo "$platform" | xargs)  # trim whitespace
-        
-        # Get available flavors for this platform
-        available_flavors=$(get_platform_flavors "$platform")
+        platform=$(echo "$platform" | xargs)
         
         for flavor in "${flavor_array[@]}"; do
-            flavor=$(echo "$flavor" | xargs)  # trim whitespace
-            
-            if [ "$flavor" = "all" ]; then
-                # Add all available flavors for this platform
-                for available in $available_flavors; do
-                    BUILD_JOBS+=("$platform:$available")
-                done
-            elif echo "$available_flavors" | grep -qw "$flavor"; then
-                # Flavor is available for this platform
-                BUILD_JOBS+=("$platform:$flavor")
-            else
-                log_warn "Flavor '$flavor' not available for $platform, skipping"
-            fi
+            flavor=$(echo "$flavor" | xargs)
+            BUILD_JOBS+=("$platform:$flavor")
         done
     done
     
@@ -347,7 +379,8 @@ main() {
     for job in "${BUILD_JOBS[@]}"; do
         local plat="${job%:*}"
         local flav="${job#*:}"
-        echo "    - $(get_output_name "$plat" "$flav")"
+        local desc=$(get_flavor_description "$plat" "$flav")
+        echo "    - $(get_output_name "$plat" "$flav")  ($desc)"
     done
     echo ""
     
@@ -388,14 +421,19 @@ main() {
         log_info "All builds complete!"
         log_info "Releases in: $OUTPUT_DIR"
         
-        # List output files
-        if [ -d "$OUTPUT_DIR" ] && command -v ls &>/dev/null; then
+        if [ -d "$OUTPUT_DIR" ]; then
             echo ""
             log_info "Output files:"
-            ls -lh "$OUTPUT_DIR" | tail -n +2 | while read -r line; do
+            ls -lh "$OUTPUT_DIR" 2>/dev/null | tail -n +2 | while read -r line; do
                 echo "    $line"
             done
         fi
+        
+        echo ""
+        log_info "Runtime usage:"
+        echo "    ./torchless-*-gpu --backend auto model.bin \"prompt\"    # Auto-select"
+        echo "    ./torchless-*-gpu --backend cuda model.bin \"prompt\"    # Force CUDA"
+        echo "    ./torchless-*-gpu --list-backends                       # List available"
     fi
 }
 

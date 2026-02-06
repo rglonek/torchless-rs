@@ -30,17 +30,20 @@ Use the provided build scripts for easy configuration:
 # Simple build with defaults (simd, parallel)
 ./scripts/build.sh
 
-# Build with GPU support
-./scripts/build.sh --cuda          # NVIDIA
-./scripts/build.sh --metal         # Apple Silicon
-./scripts/build.sh --rocm          # AMD
+# Build with all GPU backends (recommended - select at runtime)
+./scripts/build.sh --gpu
 
 # Build with PGO for 5-15% speedup
 ./scripts/build.sh --pgo
 
-# Build all release flavors
+# Build release binaries (cpu + gpu flavors)
 ./scripts/build_releases.sh
+
+# Preview what would be built
+./scripts/build_releases.sh --dry-run
 ```
+
+GPU backends are compiled in but only initialized when selected via `--backend`.
 
 ### Manual Build
 
@@ -55,11 +58,21 @@ Use the provided build scripts for easy configuration:
 ## Usage
 
 ```bash
-./target/release/torchless <model_path> "<prompt>"
+./target/release/torchless [OPTIONS] <model_path> "<prompt>"
 
-# Examples
-./target/release/torchless mistral.bin "The quick brown fox"
-./target/release/torchless model.gguf "Hello"  # GGUF auto-detected
+# Basic usage
+./target/release/torchless model.bin "The quick brown fox"
+
+# Select GPU backend at runtime
+./target/release/torchless --backend cuda model.bin "Hello"
+./target/release/torchless --backend opencl model.bin "Hello"
+./target/release/torchless --backend auto model.bin "Hello"  # auto-select best
+
+# List available backends
+./target/release/torchless --list-backends
+
+# More options
+./target/release/torchless --max-tokens 100 --temperature 0.7 model.bin "Once upon"
 ```
 
 ## Performance

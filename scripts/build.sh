@@ -85,11 +85,12 @@ ${BOLD}Feature Options:${NC}
                         Available: simd, parallel, cuda, rocm, metal-gpu, opencl,
                                    openblas, blis, accelerate
   --cpu-only            Build without any GPU backends (simd,parallel only)
-  --cuda                Add CUDA support (implies simd,parallel)
-  --rocm                Add ROCm support (implies simd,parallel)
-  --metal               Add Metal support (implies simd,parallel)
-  --opencl              Add OpenCL support (implies simd,parallel)
-  --all-gpu             Add all GPU backends available for target
+  --gpu                 Add all GPU backends available for target (recommended)
+  --cuda                Add CUDA support
+  --rocm                Add ROCm support
+  --metal               Add Metal support
+  --opencl              Add OpenCL support
+  --all-gpu             Alias for --gpu
 
 ${BOLD}Build Options:${NC}
   --profile PROFILE     Build profile: release, debug, profiling (default: release)
@@ -148,7 +149,7 @@ parse_args() {
                 FEATURES="${FEATURES},metal-gpu"; shift ;;
             --opencl)
                 FEATURES="${FEATURES},opencl"; shift ;;
-            --all-gpu)
+            --gpu|--all-gpu)
                 ALL_GPU=true; shift ;;
             --profile)
                 PROFILE="$2"; shift 2 ;;

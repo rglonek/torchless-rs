@@ -476,7 +476,7 @@ impl TensorView<'_> {
                         let elements_in_block = (ncols - x_idx).min(QK4_0);
                         for i in 0..elements_in_block {
                             let byte_idx = i / 2;
-                            let nibble = if i % 2 == 0 {
+                            let nibble = if i.is_multiple_of(2) {
                                 block.qs[byte_idx] & 0x0F
                             } else {
                                 block.qs[byte_idx] >> 4
@@ -656,7 +656,7 @@ impl TensorView<'_> {
                         let elements_in_block = (ncols - x_idx).min(QK4_0);
                         for i in 0..elements_in_block {
                             let byte_idx = i / 2;
-                            let nibble = if i % 2 == 0 {
+                            let nibble = if i.is_multiple_of(2) {
                                 block.qs[byte_idx] & 0x0F
                             } else {
                                 block.qs[byte_idx] >> 4

@@ -158,7 +158,7 @@ impl PhiLayer {
     /// Phi uses parallel computation:
     ///   x = x + attention(norm(x)) + mlp(norm(x))
     pub fn forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool) {
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Phi Layer {}/{}", layer_idx, state.config.n_layers);
         }
 
@@ -186,7 +186,7 @@ impl PhiLayer {
 
     /// Optimized forward pass
     pub fn fast_forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool) {
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Phi Layer {}/{}", layer_idx, state.config.n_layers);
         }
 
@@ -268,7 +268,7 @@ impl Phi {
         eprintln!("Loading {} Phi layers...", config.n_layers);
         let mut layers = Vec::new();
         for i in 0..config.n_layers {
-            if i % 4 == 0 {
+            if i.is_multiple_of(4) {
                 eprintln!("  Loading layer {}/{}...", i, config.n_layers);
             }
             layers.push(Self::load_layer(&params, i, &config)?);
@@ -511,7 +511,7 @@ impl<'a> LazyPhi<'a> {
 
     fn forward_layer(&self, state: &mut InferenceState, layer: &LazyPhiLayer, debug: bool) {
         let layer_idx = layer.layer_idx;
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Lazy Phi Layer {}/{}", layer_idx, self.config.n_layers);
         }
 

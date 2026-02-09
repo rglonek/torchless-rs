@@ -186,7 +186,7 @@ fn main() -> anyhow::Result<()> {
     let mut token = *tokens.last().unwrap();
 
     for i in 0..max_tokens {
-        if debug && i % 10 == 0 {
+        if debug && i.is_multiple_of(10) {
             eprintln!("\nGeneration step {}/{}", i, max_tokens);
         }
         token = generate(&model, &mut state, token, temperature, debug);

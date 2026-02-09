@@ -175,7 +175,7 @@ impl CpuInt4Storage {
     pub fn get(&self, index: usize) -> i8 {
         let byte_idx = index / 2;
         let byte = self.data[byte_idx];
-        if index % 2 == 0 {
+        if index.is_multiple_of(2) {
             // Lower nibble
             ((byte & 0x0F) as i8) - 8
         } else {

@@ -795,7 +795,7 @@ impl GGUFLoader {
 
                     for i in 0..QK5_0 {
                         let byte_idx = i / 2;
-                        let nibble = if i % 2 == 0 {
+                        let nibble = if i.is_multiple_of(2) {
                             qs[byte_idx] & 0x0F
                         } else {
                             qs[byte_idx] >> 4
@@ -827,7 +827,7 @@ impl GGUFLoader {
 
                     for i in 0..QK5_1 {
                         let byte_idx = i / 2;
-                        let nibble = if i % 2 == 0 {
+                        let nibble = if i.is_multiple_of(2) {
                             qs[byte_idx] & 0x0F
                         } else {
                             qs[byte_idx] >> 4
@@ -889,7 +889,7 @@ impl GGUFLoader {
                         let h_shift = (i % 4) * 2;
 
                         let ql_val = ql[l_idx / 2];
-                        let q_low = if l_idx % 2 == 0 {
+                        let q_low = if l_idx.is_multiple_of(2) {
                             ql_val & 0x0F
                         } else {
                             ql_val >> 4

@@ -26,7 +26,7 @@ impl Layer {
 
     /// Forward pass: norm -> attention -> residual -> norm -> mlp -> residual
     pub fn forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool) {
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Layer {}/{}", layer_idx, state.config.n_layers);
         }
 
@@ -57,7 +57,7 @@ impl Layer {
 
     /// Optimized forward pass: uses parallel attention and MLP when available
     pub fn fast_forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool) {
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Layer {}/{}", layer_idx, state.config.n_layers);
         }
 

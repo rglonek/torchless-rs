@@ -78,7 +78,7 @@ impl LLaMA {
         eprintln!("Loading {} LLaMA layers...", config.n_layers);
         let mut layers = Vec::new();
         for i in 0..config.n_layers {
-            if i % 4 == 0 {
+            if i.is_multiple_of(4) {
                 eprintln!("  Loading layer {}/{}...", i, config.n_layers);
             }
             layers.push(Self::load_layer(&params, i, &config, &tensor_names)?);

@@ -36,7 +36,7 @@ impl LazyLayer {
         debug: bool,
         params: &Parameters,
     ) {
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Layer {}/{}", layer_idx, state.config.n_layers);
         }
 
@@ -73,7 +73,7 @@ impl LazyLayer {
         debug: bool,
         params: &Parameters,
     ) {
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Layer {}/{}", layer_idx, state.config.n_layers);
         }
 

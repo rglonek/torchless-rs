@@ -156,7 +156,7 @@ impl<T> AlignedBuffer<T> {
     /// Check if the buffer is properly aligned for SIMD operations.
     #[inline]
     pub fn is_aligned(&self) -> bool {
-        (self.ptr.as_ptr() as usize) % SIMD_ALIGNMENT == 0
+        (self.ptr.as_ptr() as usize).is_multiple_of(SIMD_ALIGNMENT)
     }
 }
 

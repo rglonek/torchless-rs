@@ -70,7 +70,7 @@ impl Q4_0Block {
     pub fn dequantize(&self, index: usize) -> f32 {
         debug_assert!(index < QK4_0);
         let byte_idx = index / 2;
-        let nibble = if index % 2 == 0 {
+        let nibble = if index.is_multiple_of(2) {
             self.qs[byte_idx] & 0x0F
         } else {
             self.qs[byte_idx] >> 4
@@ -247,7 +247,7 @@ impl Q4KMBlock {
         // Simple packing: first 4 bytes contain low nibbles of scales 0-7,
         // scales 0,1 in byte 0, scales 2,3 in byte 1, etc.
         let byte_idx = block_idx / 2;
-        let scale_bits = if block_idx % 2 == 0 {
+        let scale_bits = if block_idx.is_multiple_of(2) {
             self.scales[byte_idx] & 0x0F
         } else {
             self.scales[byte_idx] >> 4
@@ -260,7 +260,7 @@ impl Q4KMBlock {
         debug_assert!(block_idx < Self::N_BLOCKS);
         // Mins stored in bytes 4-7
         let byte_idx = 4 + block_idx / 2;
-        let min_bits = if block_idx % 2 == 0 {
+        let min_bits = if block_idx.is_multiple_of(2) {
             self.scales[byte_idx] & 0x0F
         } else {
             self.scales[byte_idx] >> 4
@@ -274,7 +274,7 @@ impl Q4KMBlock {
         debug_assert!(index < QK_K);
         let block_idx = index / 32;
         let byte_idx = index / 2;
-        let nibble = if index % 2 == 0 {
+        let nibble = if index.is_multiple_of(2) {
             self.qs[byte_idx] & 0x0F
         } else {
             self.qs[byte_idx] >> 4
@@ -373,7 +373,7 @@ impl Q4KMBlock {
             let scale_byte_idx = i / 2;
             let min_byte_idx = 4 + i / 2;
 
-            if i % 2 == 0 {
+            if i.is_multiple_of(2) {
                 scales[scale_byte_idx] = (scales[scale_byte_idx] & 0xF0) | scale_q;
                 scales[min_byte_idx] = (scales[min_byte_idx] & 0xF0) | min_q;
             } else {
@@ -390,7 +390,7 @@ impl Q4KMBlock {
 
             // Get the reconstructed scale and min from the packed values
             let scale_byte_idx = block_idx / 2;
-            let scale_bits = if block_idx % 2 == 0 {
+            let scale_bits = if block_idx.is_multiple_of(2) {
                 scales[scale_byte_idx] & 0x0F
             } else {
                 scales[scale_byte_idx] >> 4
@@ -398,7 +398,7 @@ impl Q4KMBlock {
             let rec_scale = d * scale_bits as f32;
 
             let min_byte_idx = 4 + block_idx / 2;
-            let min_bits = if block_idx % 2 == 0 {
+            let min_bits = if block_idx.is_multiple_of(2) {
                 scales[min_byte_idx] & 0x0F
             } else {
                 scales[min_byte_idx] >> 4
@@ -472,7 +472,7 @@ impl Q4KSBlock {
         // Only 6 scales can be stored, so blocks 6,7 share with 4,5
         let effective_idx = block_idx.min(5);
         let byte_idx = effective_idx / 2;
-        let scale_bits = if effective_idx % 2 == 0 {
+        let scale_bits = if effective_idx.is_multiple_of(2) {
             self.scales[byte_idx] & 0x0F
         } else {
             self.scales[byte_idx] >> 4
@@ -485,7 +485,7 @@ impl Q4KSBlock {
         debug_assert!(block_idx < Self::N_BLOCKS);
         let effective_idx = block_idx.min(5);
         let byte_idx = 3 + effective_idx / 2;
-        let min_bits = if effective_idx % 2 == 0 {
+        let min_bits = if effective_idx.is_multiple_of(2) {
             self.scales[byte_idx] & 0x0F
         } else {
             self.scales[byte_idx] >> 4
@@ -500,7 +500,7 @@ impl Q4KSBlock {
         let block_idx = index / 32;
 
         let byte_idx = index / 2;
-        let nibble = if index % 2 == 0 {
+        let nibble = if index.is_multiple_of(2) {
             self.qs[byte_idx] & 0x0F
         } else {
             self.qs[byte_idx] >> 4
@@ -597,7 +597,7 @@ impl Q4KSBlock {
             let scale_byte_idx = i / 2;
             let min_byte_idx = 3 + i / 2;
 
-            if i % 2 == 0 {
+            if i.is_multiple_of(2) {
                 scales[scale_byte_idx] = (scales[scale_byte_idx] & 0xF0) | scale_q;
                 scales[min_byte_idx] = (scales[min_byte_idx] & 0xF0) | min_q;
             } else {

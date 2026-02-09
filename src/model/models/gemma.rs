@@ -154,7 +154,7 @@ impl GemmaLayer {
 
     /// Forward pass: norm -> attention -> residual -> norm -> mlp -> residual
     pub fn forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool) {
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Gemma Layer {}/{}", layer_idx, state.config.n_layers);
         }
 
@@ -185,7 +185,7 @@ impl GemmaLayer {
 
     /// Optimized forward pass
     pub fn fast_forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool) {
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Gemma Layer {}/{}", layer_idx, state.config.n_layers);
         }
 
@@ -266,7 +266,7 @@ impl Gemma {
         eprintln!("Loading {} Gemma layers...", config.n_layers);
         let mut layers = Vec::new();
         for i in 0..config.n_layers {
-            if i % 4 == 0 {
+            if i.is_multiple_of(4) {
                 eprintln!("  Loading layer {}/{}...", i, config.n_layers);
             }
             layers.push(Self::load_layer(&params, i, &config)?);
@@ -527,7 +527,7 @@ impl<'a> LazyGemma<'a> {
     }
 
     fn forward_layer(&self, state: &mut InferenceState, layer: &LazyGemmaLayer, debug: bool) {
-        if debug && layer.layer_idx % 8 == 0 {
+        if debug && layer.layer_idx.is_multiple_of(8) {
             eprintln!(
                 "  Lazy Gemma Layer {}/{}",
                 layer.layer_idx, self.config.n_layers

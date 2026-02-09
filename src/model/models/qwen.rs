@@ -254,7 +254,7 @@ impl QwenLayer {
 
     /// Forward pass
     pub fn forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool) {
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Qwen Layer {}/{}", layer_idx, state.config.n_layers);
         }
 
@@ -285,7 +285,7 @@ impl QwenLayer {
 
     /// Optimized forward pass
     pub fn fast_forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool) {
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Qwen Layer {}/{}", layer_idx, state.config.n_layers);
         }
 
@@ -362,7 +362,7 @@ impl Qwen {
         eprintln!("Loading {} Qwen layers...", config.n_layers);
         let mut layers = Vec::new();
         for i in 0..config.n_layers {
-            if i % 4 == 0 {
+            if i.is_multiple_of(4) {
                 eprintln!("  Loading layer {}/{}...", i, config.n_layers);
             }
             layers.push(Self::load_layer(&params, i, &config)?);
@@ -675,7 +675,7 @@ impl<'a> LazyQwen<'a> {
 
     fn forward_layer(&self, state: &mut InferenceState, layer: &LazyQwenLayer, debug: bool) {
         let layer_idx = layer.layer_idx;
-        if debug && layer_idx % 8 == 0 {
+        if debug && layer_idx.is_multiple_of(8) {
             eprintln!("  Lazy Qwen Layer {}/{}", layer_idx, self.config.n_layers);
         }
 

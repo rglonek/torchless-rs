@@ -71,22 +71,10 @@ pub fn detect_format<P: AsRef<Path>>(path: P) -> Result<ModelFormat> {
         return Ok(ModelFormat::GGUF);
     }
 
-    // Check for Safetensors: starts with little-endian u64 header size
-    // followed by JSON header starting with '{'
+    // Both Torchless and Safetensors start with little-endian u64 header size + JSON.
+    // Check Torchless first (more specific: "metadata" + "tensors" keys).
     let header_size = u64::from_le_bytes(header);
     if header_size > 0 && header_size < SAFETENSORS_MAX_HEADER_CHECK {
-        // Try to read the first byte of the JSON header
-        let mut json_start = [0u8; 1];
-        if file.read(&mut json_start).is_ok() && json_start[0] == b'{' {
-            return Ok(ModelFormat::Safetensors);
-        }
-    }
-
-    // Check for Torchless Binary: starts with little-endian u64 header size
-    // followed by JSON header (but different structure than safetensors)
-    // Torchless has a specific JSON structure with "metadata", "tensors", "tokenizer"
-    if header_size > 0 && header_size < SAFETENSORS_MAX_HEADER_CHECK {
-        // Reset file position and try to read JSON
         file = File::open(path)?;
         let mut full_header = vec![0u8; 8 + header_size as usize];
         if file.read_exact(&mut full_header).is_ok() {
@@ -96,9 +84,14 @@ pub fn detect_format<P: AsRef<Path>>(path: P) -> Result<ModelFormat> {
                 .map(|s| s.trim_end_matches('\0'))
                 .unwrap_or("");
 
-            // Check for Torchless-specific keys
+            // Check for Torchless-specific keys first
             if json_str.contains("\"metadata\"") && json_str.contains("\"tensors\"") {
                 return Ok(ModelFormat::TorchlessBinary);
+            }
+
+            // Otherwise, if it's valid JSON starting with '{', treat as Safetensors
+            if json_str.starts_with('{') {
+                return Ok(ModelFormat::Safetensors);
             }
         }
     }

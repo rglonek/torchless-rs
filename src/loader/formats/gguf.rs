@@ -55,6 +55,8 @@ use std::path::Path;
 
 use super::UnifiedConfig;
 use crate::loader::quantization::{Q4KMBlock, Q4_0Block, Q8_0Block, QK4_0, QK8_0, QK_K};
+use crate::loader::Config;
+use crate::tokenizer::Tokenizer;
 
 /// GGUF magic number: "GGUF" in ASCII
 pub const GGUF_MAGIC: u32 = 0x46554747;
@@ -1011,6 +1013,203 @@ impl GGUFLoader {
         if self.tensor_names.len() > 10 {
             println!("  ... and {} more tensors", self.tensor_names.len() - 10);
         }
+    }
+
+    /// Build a mapping from HuggingFace-style tensor names to GGUF llama.cpp-style tensor names.
+    pub fn build_name_map(&self) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+
+        // Check if file already uses HF-style names
+        if self
+            .tensor_names
+            .iter()
+            .any(|n| n == "model.embed_tokens.weight")
+        {
+            return map;
+        }
+
+        // Check if file uses llama.cpp-style names
+        let has_llama_cpp = self.tensor_names.iter().any(|n| n == "token_embd.weight")
+            || self.tensor_names.iter().any(|n| n.starts_with("blk."));
+        if !has_llama_cpp {
+            return map;
+        }
+
+        // Extract block numbers from tensor names (e.g. blk.0.attn_norm.weight -> 0)
+        let mut block_indices: Vec<usize> = self
+            .tensor_names
+            .iter()
+            .filter_map(|name| {
+                let stripped = name.strip_prefix("blk.")?;
+                let num_part = stripped.split('.').next()?;
+                num_part.parse::<usize>().ok()
+            })
+            .collect();
+        block_indices.sort();
+        block_indices.dedup();
+
+        // Global tensors (not per-block)
+        map.insert(
+            "model.embed_tokens.weight".to_string(),
+            "token_embd.weight".to_string(),
+        );
+        map.insert(
+            "model.norm.weight".to_string(),
+            "output_norm.weight".to_string(),
+        );
+        map.insert("lm_head.weight".to_string(), "output.weight".to_string());
+
+        // Per-block tensors
+        for n in block_indices {
+            map.insert(
+                format!("model.layers.{}.input_layernorm.weight", n),
+                format!("blk.{}.attn_norm.weight", n),
+            );
+            map.insert(
+                format!("model.layers.{}.post_attention_layernorm.weight", n),
+                format!("blk.{}.ffn_norm.weight", n),
+            );
+            map.insert(
+                format!("model.layers.{}.self_attn.q_proj.weight", n),
+                format!("blk.{}.attn_q.weight", n),
+            );
+            map.insert(
+                format!("model.layers.{}.self_attn.k_proj.weight", n),
+                format!("blk.{}.attn_k.weight", n),
+            );
+            map.insert(
+                format!("model.layers.{}.self_attn.v_proj.weight", n),
+                format!("blk.{}.attn_v.weight", n),
+            );
+            map.insert(
+                format!("model.layers.{}.self_attn.o_proj.weight", n),
+                format!("blk.{}.attn_output.weight", n),
+            );
+            map.insert(
+                format!("model.layers.{}.mlp.gate_proj.weight", n),
+                format!("blk.{}.ffn_gate.weight", n),
+            );
+            map.insert(
+                format!("model.layers.{}.mlp.up_proj.weight", n),
+                format!("blk.{}.ffn_up.weight", n),
+            );
+            map.insert(
+                format!("model.layers.{}.mlp.down_proj.weight", n),
+                format!("blk.{}.ffn_down.weight", n),
+            );
+        }
+
+        map
+    }
+
+    /// Build a Tokenizer from GGUF tokenizer metadata.
+    pub fn build_tokenizer(&self) -> Result<Tokenizer> {
+        let tokens_arr = self
+            .metadata
+            .kv
+            .get("tokenizer.ggml.tokens")
+            .context("tokenizer.ggml.tokens not found in GGUF metadata")?;
+
+        let tokens = match tokens_arr {
+            GGUFValue::Array(arr) => arr,
+            _ => anyhow::bail!("tokenizer.ggml.tokens must be an array"),
+        };
+
+        let mut vocab = HashMap::new();
+        for (i, val) in tokens.iter().enumerate() {
+            if let GGUFValue::String(s) = val {
+                vocab.insert(s.clone(), i as u32);
+            }
+        }
+
+        let merges: Vec<String> = self
+            .metadata
+            .kv
+            .get("tokenizer.ggml.merges")
+            .and_then(|v| {
+                if let GGUFValue::Array(arr) = v {
+                    let strings: Vec<String> = arr
+                        .iter()
+                        .filter_map(|e| {
+                            if let GGUFValue::String(s) = e {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    Some(strings)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        Ok(Tokenizer::new(vocab, merges))
+    }
+
+    /// Build a concrete Config from GGUF metadata.
+    pub fn to_config(&self) -> Result<Config> {
+        let hidden_size =
+            self.metadata
+                .embedding_length()
+                .context("embedding_length not found in GGUF metadata")? as usize;
+
+        let intermediate_size =
+            self.metadata
+                .feed_forward_length()
+                .context("feed_forward_length not found in GGUF metadata")? as usize;
+
+        let n_layers = self
+            .metadata
+            .block_count()
+            .context("block_count not found in GGUF metadata")? as usize;
+
+        let n_heads = self
+            .metadata
+            .head_count()
+            .context("head_count not found in GGUF metadata")? as usize;
+
+        let n_kv_heads = self.metadata.head_count_kv().unwrap_or(n_heads as u32) as usize;
+
+        let vocab_size = self
+            .metadata
+            .vocab_size()
+            .context("vocab_size not found in GGUF metadata")? as usize;
+
+        let max_position_embeddings = self
+            .metadata
+            .context_length()
+            .map(|v| v as usize)
+            .unwrap_or(4096);
+
+        let rope_theta = self.metadata.rope_freq_base().unwrap_or(10000.0);
+
+        let norm_eps = self.metadata.layer_norm_eps().unwrap_or(1e-5);
+
+        Ok(Config {
+            hidden_size,
+            intermediate_size,
+            n_layers,
+            n_heads,
+            n_kv_heads,
+            vocab_size,
+            max_position_embeddings,
+            sliding_window: 0,
+            rope_theta,
+            norm_eps,
+            act_type: "silu".to_string(),
+            quant: "gguf".to_string(),
+            n_routed_experts: 0,
+            n_experts_per_token: 0,
+            n_shared_experts: 0,
+            moe_intermediate_size: 0,
+            first_moe_layer: 0,
+            head_dim: 0,
+            swiglu_limit: 0.0,
+            attention_sliding_window: 0,
+            attention_bias: false,
+        })
     }
 }
 

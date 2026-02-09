@@ -55,32 +55,48 @@ jobs:
         run: cargo clippy --features webgpu -- -D warnings
 
   build:
-    name: Build (${{ matrix.name }})
+    name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            name: linux-x86_64
+            target: linux-x86_64
+            features: "simd,parallel,cuda,opencl,rocm,webgpu"
+            install: "sudo apt-get update && sudo apt-get install -y ocl-icd-opencl-dev"
             binary_path: target/release/torchless
           - os: ubuntu-24.04-arm
-            name: linux-aarch64
+            target: linux-aarch64
+            features: "simd,parallel,cuda,opencl,rocm,webgpu"
+            install: "sudo apt-get update && sudo apt-get install -y ocl-icd-opencl-dev"
             binary_path: target/release/torchless
           - os: macos-14
-            name: macos-aarch64
+            target: macos-aarch64
+            features: "simd,parallel,metal-gpu,opencl,accelerate,webgpu"
+            install: ""
             binary_path: target/release/torchless
           - os: macos-14
-            name: macos-x86_64
+            target: macos-x86_64
+            features: "simd,parallel,opencl,accelerate,webgpu"
+            install: ""
             rust_target: x86_64-apple-darwin
             binary_path: target/x86_64-apple-darwin/release/torchless
           - os: windows-latest
-            name: windows-x86_64
+            target: windows-x86_64
+            features: "simd,parallel,cuda,opencl,webgpu"
+            install: "vcpkg install opencl:x64-windows && echo \"OPENCL_PATH=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\" >> $GITHUB_ENV"
             binary_path: target/release/torchless.exe
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build dependencies
+        if: matrix.install != ''
+        shell: bash
+        run: ${{ matrix.install }}
 
       - name: Add cross-compilation target
         if: matrix.rust_target
@@ -90,13 +106,13 @@ jobs:
         shell: bash
         run: |
           if [ -n "${{ matrix.rust_target }}" ]; then
-            cargo build --release --verbose --features webgpu --target ${{ matrix.rust_target }}
+            cargo build --release --verbose --features "${{ matrix.features }}" --target ${{ matrix.rust_target }}
           else
-            cargo build --release --verbose --features webgpu
+            cargo build --release --verbose --features "${{ matrix.features }}"
           fi
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: torchless-${{ matrix.name }}
+          name: torchless-${{ matrix.target }}
           path: ${{ matrix.binary_path }}

@@ -20,18 +20,28 @@ jobs:
           - os: ubuntu-latest
             target: linux-x86_64
             ext: ""
+            features: "simd,parallel,cuda,opencl"
+            install: "sudo apt-get update && sudo apt-get install -y ocl-icd-opencl-dev"
           - os: ubuntu-24.04-arm
             target: linux-aarch64
             ext: ""
+            features: "simd,parallel,cuda,opencl"
+            install: "sudo apt-get update && sudo apt-get install -y ocl-icd-opencl-dev"
           - os: macos-14
             target: macos-x86_64
             ext: ""
+            features: "simd,parallel,opencl,accelerate"
+            install: ""
           - os: macos-14
             target: macos-aarch64
             ext: ""
+            features: "simd,parallel,metal-gpu,opencl,accelerate"
+            install: ""
           - os: windows-latest
             target: windows-x86_64
             ext: ".exe"
+            features: "simd,parallel,cuda,opencl"
+            install: "vcpkg install opencl:x64-windows && echo \"OPENCL_PATH=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\" >> $GITHUB_ENV"
 
     steps:
       - uses: actions/checkout@v4
@@ -39,12 +49,17 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install build dependencies
+        if: matrix.install != ''
+        shell: bash
+        run: ${{ matrix.install }}
+
       - name: Make scripts executable
         shell: bash
         run: |
           chmod +x scripts/*.sh scripts/hooks/*.sh || true
 
-      - name: Build (CPU-only)
+      - name: Build
         shell: bash
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\\(.*\\)"/\\1/')
@@ -52,7 +67,7 @@ jobs:
           OUTPUT_NAME="torchless-${VERSION}-${{ matrix.target }}${{ matrix.ext }}"
           ./scripts/build.sh \
             --target "${{ matrix.target }}" \
-            --cpu-only \
+            --features "${{ matrix.features }}" \
             --profile release \
             --output-dir "$OUTPUT_DIR" \
             --output-name "$OUTPUT_NAME"

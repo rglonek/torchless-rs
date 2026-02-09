@@ -992,12 +992,10 @@ fn discover_cuda() -> BackendInfo {
     use cudarc::driver::CudaDevice;
 
     let mut devices = Vec::new();
-    let mut available = false;
 
     // Try to enumerate CUDA devices
     match CudaDevice::count() {
         Ok(count) if count > 0 => {
-            available = true;
             for i in 0..(count as usize) {
                 match CudaDevice::new(i) {
                     Ok(device) => {
@@ -1045,7 +1043,7 @@ fn discover_cuda() -> BackendInfo {
     BackendInfo {
         backend_type: BackendType::Cuda,
         name: "CUDA".to_string(),
-        available,
+        available: !devices.is_empty(),
         devices,
         error: None,
     }

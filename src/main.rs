@@ -399,9 +399,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     #[cfg(not(unix))]
-    if socket_path.is_some() {
-        eprintln!("Error: --socket is only supported on Unix systems");
-        std::process::exit(1);
+    {
+        // chat_save_root is also a socket-server-only option (Unix-only)
+        let _ = &chat_save_root;
+        if socket_path.is_some() {
+            eprintln!("Error: --socket and --chat-save-root are only supported on Unix systems");
+            std::process::exit(1);
+        }
     }
 
     // In chat mode, only model_path is required

@@ -1,22 +1,26 @@
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, Write};
+use std::path::{Path, PathBuf};
 use torchless::tokenizer::Tokenizer;
 use torchless::{
-    display_thinking_token, generate, generate_lazy, generate_lazy_until_eos, generate_until_eos,
-    init_backend, print_backend_summary, strip_thinking, BackendPreference, ChatMessage, ChatRole,
-    ChatTemplate, GenerationResult, InferenceState, LazyMistral, Mistral, Parameters,
-    SamplingConfig, SelfSpeculativeDecoder, SpeculativeConfig, ThinkingState,
+    display_thinking_token_to, generate, generate_lazy, generate_lazy_until_eos,
+    generate_until_eos, init_backend, print_backend_summary, strip_thinking, BackendPreference,
+    ChatMessage, ChatRole, ChatTemplate, GenerationResult, InferenceState, LazyMistral, Mistral,
+    Parameters, SamplingConfig, SelfSpeculativeDecoder, SpeculativeConfig, ThinkingState,
 };
+
+#[cfg(unix)]
+mod server;
 
 /// Mutable session configuration for the chat REPL.
 /// All fields can be changed at runtime via in-session commands.
-struct ChatSessionConfig {
-    sampling: SamplingConfig,
-    speculative: bool,
-    max_tokens: usize,
-    debug: bool,
-    system_prompt: Option<String>,
+pub(crate) struct ChatSessionConfig {
+    pub(crate) sampling: SamplingConfig,
+    pub(crate) speculative: bool,
+    pub(crate) max_tokens: usize,
+    pub(crate) debug: bool,
+    pub(crate) system_prompt: Option<String>,
 }
 
 fn print_usage(program: &str) {
@@ -46,6 +50,10 @@ fn print_usage(program: &str) {
     );
     eprintln!(
         "                        (auto-detected; use /thinking in chat to toggle at runtime)"
+    );
+    eprintln!("  --socket <PATH>       Start a Unix socket server at PATH (multi-user chat)");
+    eprintln!(
+        "  --chat-save-root <DIR> Root directory for per-user chat saves (required with --socket)"
     );
     eprintln!("  --list-backends       List available backends and exit");
     eprintln!("  --debug               Enable debug output");
@@ -94,7 +102,7 @@ fn parse_backend(s: &str) -> Option<BackendPreference> {
 }
 
 /// Resolve max_seq_len: default to model's max_position_embeddings, warn if user exceeds it.
-fn resolve_max_seq_len(user_value: Option<usize>, model_max: usize) -> usize {
+pub(crate) fn resolve_max_seq_len(user_value: Option<usize>, model_max: usize) -> usize {
     match user_value {
         Some(requested) => {
             if requested > model_max {
@@ -126,7 +134,7 @@ fn resolve_max_seq_len(user_value: Option<usize>, model_max: usize) -> usize {
 ///
 /// - If max_seq_len >= 4096: clamp to 2048..32768
 /// - If max_seq_len < 4096:  clamp to 1024..32768
-fn resolve_max_tokens(user_value: Option<usize>, max_seq_len: usize) -> usize {
+pub(crate) fn resolve_max_tokens(user_value: Option<usize>, max_seq_len: usize) -> usize {
     match user_value {
         Some(requested) => requested,
         None => {
@@ -156,6 +164,8 @@ fn main() -> anyhow::Result<()> {
     let mut list_backends = false;
     let mut chat_mode = false;
     let mut system_prompt: Option<String> = None;
+    let mut socket_path: Option<String> = None;
+    let mut chat_save_root: Option<String> = None;
     let mut positional_args: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -195,6 +205,22 @@ fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
                 system_prompt = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--socket" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --socket requires a path");
+                    std::process::exit(1);
+                }
+                socket_path = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--chat-save-root" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --chat-save-root requires a directory path");
+                    std::process::exit(1);
+                }
+                chat_save_root = Some(args[i + 1].clone());
                 i += 2;
             }
             "--backend" => {
@@ -311,6 +337,44 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Socket server mode
+    #[cfg(unix)]
+    if let Some(ref sock_path) = socket_path {
+        let save_root = match chat_save_root {
+            Some(ref dir) => dir.clone(),
+            None => {
+                eprintln!("Error: --chat-save-root is required when using --socket");
+                std::process::exit(1);
+            }
+        };
+        if positional_args.is_empty() {
+            eprintln!("Error: <model_path> is required");
+            print_usage(program);
+            std::process::exit(1);
+        }
+        let model_path = &positional_args[0];
+        return server::run_socket_server(
+            sock_path,
+            &save_root,
+            model_path,
+            backend_pref,
+            max_tokens_arg,
+            max_seq_len_arg,
+            &sampling_config,
+            system_prompt.as_deref(),
+            lazy,
+            speculative,
+            show_thinking,
+            debug,
+        );
+    }
+
+    #[cfg(not(unix))]
+    if socket_path.is_some() {
+        eprintln!("Error: --socket is only supported on Unix systems");
+        std::process::exit(1);
+    }
+
     // In chat mode, only model_path is required
     if chat_mode {
         if positional_args.is_empty() {
@@ -408,6 +472,7 @@ fn main() -> anyhow::Result<()> {
                 &[],  // no EOS detection in single-shot mode
                 None, // no thinking filtering in single-shot mode
                 debug,
+                &mut io::stdout(),
             );
         } else {
             for i in 0..max_tokens {
@@ -480,6 +545,7 @@ fn main() -> anyhow::Result<()> {
                 &[],  // no EOS detection in single-shot mode
                 None, // no thinking filtering in single-shot mode
                 debug,
+                &mut io::stdout(),
             );
         } else {
             for i in 0..max_tokens {
@@ -509,7 +575,7 @@ fn main() -> anyhow::Result<()> {
 /// Uses the same model at different temperatures for draft and verification.
 /// Pass an empty `eos_token_ids` slice to disable EOS detection (single-shot mode).
 #[allow(clippy::too_many_arguments)]
-fn generate_speculative_until_eos<'a, F>(
+pub(crate) fn generate_speculative_until_eos<'a, F>(
     forward: F,
     tokenizer: &Tokenizer,
     state: &mut InferenceState,
@@ -519,6 +585,7 @@ fn generate_speculative_until_eos<'a, F>(
     eos_token_ids: &[u32],
     thinking: Option<&ThinkingState>,
     debug: bool,
+    output: &mut dyn Write,
 ) -> GenerationResult
 where
     F: Fn(&mut InferenceState, u32) + 'a,
@@ -548,12 +615,12 @@ where
             }
             if let Some(ts) = thinking {
                 let action = ts.process_token(t);
-                display_thinking_token(action, || tokenizer.decode(&[t]));
+                display_thinking_token_to(output, action, || tokenizer.decode(&[t]));
             } else {
                 let text = tokenizer.decode(&[t]);
-                print!("{}", text);
+                let _ = write!(output, "{}", text);
             }
-            let _ = io::stdout().flush();
+            let _ = output.flush();
             tokens.push(t);
             if tokens.len() >= max_tokens {
                 break;
@@ -587,6 +654,47 @@ where
 // =============================================================================
 // Chat Mode
 // =============================================================================
+
+/// Sanitize a filename: allow only alphanumeric, underscore, hyphen, space, dot.
+/// Returns None if the name is invalid or contains path traversal attempts.
+fn sanitize_filename(name: &str) -> Option<&str> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 255 {
+        return None;
+    }
+    if name.contains("..") || name.contains('/') || name.contains('\\') {
+        return None;
+    }
+    if name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ' ' | '.'))
+    {
+        Some(name)
+    } else {
+        None
+    }
+}
+
+/// Resolve a save/load file path. In socket mode (`save_root` is `Some`), the filename
+/// is resolved relative to `save_root` with sanitization. In CLI mode, the path is used as-is.
+fn resolve_save_path(save_root: Option<&Path>, arg: &str) -> Result<PathBuf, String> {
+    match save_root {
+        Some(root) => {
+            let name = sanitize_filename(arg).ok_or_else(|| {
+                format!(
+                    "Invalid filename '{}'. Only letters, numbers, underscore, hyphen, space, dot allowed.",
+                    arg
+                )
+            })?;
+            let mut filename = name.to_string();
+            if !filename.ends_with(".json") {
+                filename.push_str(".json");
+            }
+            Ok(root.join(filename))
+        }
+        None => Ok(PathBuf::from(arg)),
+    }
+}
 
 /// Run the interactive chat REPL.
 #[allow(clippy::too_many_arguments)]
@@ -649,12 +757,18 @@ fn run_chat(
             system_prompt: system_prompt.map(|s| s.to_string()),
         };
 
+        let stdin = io::stdin();
+        let mut stdin_lock = stdin.lock();
+        let mut stdout = io::stdout();
         run_chat_repl(
             state,
             &model.tokenizer,
             config,
             max_seq_len,
             &thinking_state,
+            None,
+            &mut stdin_lock,
+            &mut stdout,
             &mut |state, tokens, debug| {
                 for (i, &token) in tokens.iter().enumerate() {
                     if debug && (i % 50 == 0) {
@@ -664,7 +778,7 @@ fn run_chat(
                     state.pos += 1;
                 }
             },
-            &mut |state, first_token, eos_ids, config| {
+            &mut |state, first_token, eos_ids, config, output| {
                 let debug = config.debug;
                 if config.speculative {
                     generate_speculative_until_eos(
@@ -677,6 +791,7 @@ fn run_chat(
                         eos_ids,
                         Some(&thinking_state),
                         debug,
+                        output,
                     )
                 } else {
                     generate_lazy_until_eos(
@@ -689,8 +804,10 @@ fn run_chat(
                         debug,
                         |token_id| {
                             let action = thinking_state.process_token(token_id);
-                            display_thinking_token(action, || model.tokenizer.decode(&[token_id]));
-                            let _ = io::stdout().flush();
+                            display_thinking_token_to(output, action, || {
+                                model.tokenizer.decode(&[token_id])
+                            });
+                            let _ = output.flush();
                         },
                     )
                 }
@@ -736,12 +853,18 @@ fn run_chat(
             system_prompt: system_prompt.map(|s| s.to_string()),
         };
 
+        let stdin = io::stdin();
+        let mut stdin_lock = stdin.lock();
+        let mut stdout = io::stdout();
         run_chat_repl(
             state,
             &model.tokenizer,
             config,
             max_seq_len,
             &thinking_state,
+            None,
+            &mut stdin_lock,
+            &mut stdout,
             &mut |state, tokens, debug| {
                 for (i, &token) in tokens.iter().enumerate() {
                     if debug && (i % 50 == 0) {
@@ -751,7 +874,7 @@ fn run_chat(
                     state.pos += 1;
                 }
             },
-            &mut |state, first_token, eos_ids, config| {
+            &mut |state, first_token, eos_ids, config, output| {
                 let debug = config.debug;
                 if config.speculative {
                     generate_speculative_until_eos(
@@ -764,6 +887,7 @@ fn run_chat(
                         eos_ids,
                         Some(&thinking_state),
                         debug,
+                        output,
                     )
                 } else {
                     generate_until_eos(
@@ -776,8 +900,10 @@ fn run_chat(
                         debug,
                         |token_id| {
                             let action = thinking_state.process_token(token_id);
-                            display_thinking_token(action, || model.tokenizer.decode(&[token_id]));
-                            let _ = io::stdout().flush();
+                            display_thinking_token_to(output, action, || {
+                                model.tokenizer.decode(&[token_id])
+                            });
+                            let _ = output.flush();
                         },
                     )
                 }
@@ -790,22 +916,29 @@ fn run_chat(
 ///
 /// `config` owns the mutable session configuration (sampling, speculative, max_tokens, debug,
 /// system_prompt) so that in-session commands can change these values at runtime.
+/// `save_root` is an optional root directory for save/load operations (socket mode uses per-user dirs).
+/// `input` is the input stream (stdin for CLI, socket for server).
+/// `output` is the output stream (stdout for CLI, socket for server).
 /// `process_tokens` processes prompt tokens through the model (advancing state.pos).
 /// `generate_response` generates a response from a starting token, returning the result.
 /// `thinking_state` tracks thinking model output filtering (auto-detected; no-op if not a thinking model).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn run_chat_repl(
+pub(crate) fn run_chat_repl(
     mut state: InferenceState,
     tokenizer: &Tokenizer,
     mut config: ChatSessionConfig,
     max_seq_len: usize,
     thinking_state: &ThinkingState,
+    save_root: Option<&Path>,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
     process_tokens: &mut dyn FnMut(&mut InferenceState, &[u32], bool),
     generate_response: &mut dyn FnMut(
         &mut InferenceState,
         u32,
         &[u32],
         &ChatSessionConfig,
+        &mut dyn Write,
     ) -> GenerationResult,
 ) -> anyhow::Result<()> {
     // Select chat template (default to Mistral for now)
@@ -813,14 +946,15 @@ fn run_chat_repl(
     let eos_ids = chat_template.eos_token_ids(tokenizer);
 
     if eos_ids.is_empty() {
-        eprintln!(
+        writeln!(
+            output,
             "Warning: no EOS tokens found in vocabulary for {:?} template. \
              Generation will only stop at --max-tokens ({}).",
             chat_template, config.max_tokens
-        );
+        )?;
     }
 
-    println!("Initializing inference state...");
+    writeln!(output, "Initializing inference state...")?;
 
     // Build initial conversation history
     let mut history: Vec<ChatMessage> = Vec::new();
@@ -834,31 +968,29 @@ fn run_chat_repl(
     // Track length of the last assistant generation (for /context and /retry)
     let mut last_generation_len: usize = 0;
 
-    println!();
-    println!("Chat mode active. Type /help for commands.");
-    println!();
-
-    let stdin = io::stdin();
-    let mut reader = stdin.lock().lines();
+    writeln!(output)?;
+    writeln!(output, "Chat mode active. Type /help for commands.")?;
+    writeln!(output)?;
 
     loop {
         // Print prompt
-        print!("> ");
-        io::stdout().flush()?;
+        write!(output, "> ")?;
+        output.flush()?;
 
         // Read user input
-        let line = match reader.next() {
-            Some(Ok(line)) => line,
-            Some(Err(e)) => {
-                eprintln!("Error reading input: {}", e);
+        let mut line = String::new();
+        match input.read_line(&mut line) {
+            Ok(0) => break, // EOF
+            Ok(_) => {}
+            Err(e) => {
+                let _ = writeln!(output, "Error reading input: {}", e);
                 break;
             }
-            None => break, // EOF
-        };
+        }
 
-        let input = line.trim().to_string();
+        let user_input = line.trim().to_string();
 
-        if input.is_empty() {
+        if user_input.is_empty() {
             continue;
         }
 
@@ -866,14 +998,14 @@ fn run_chat_repl(
         let mut skip_processing = false;
 
         // Handle commands: split on first space for arg parsing
-        let (cmd, arg) = match input.find(' ') {
-            Some(pos) => (&input[..pos], Some(input[pos + 1..].trim())),
-            None => (input.as_str(), None),
+        let (cmd, arg) = match user_input.find(' ') {
+            Some(pos) => (&user_input[..pos], Some(user_input[pos + 1..].trim())),
+            None => (user_input.as_str(), None),
         };
 
         match cmd {
             "/quit" | "/exit" | "/q" => {
-                println!("Goodbye!");
+                writeln!(output, "Goodbye!")?;
                 break;
             }
             "/clear" => {
@@ -883,32 +1015,37 @@ fn run_chat_repl(
                 }
                 state.reset();
                 processed_tokens.clear();
-                println!("Conversation cleared.");
+                writeln!(output, "Conversation cleared.")?;
                 continue;
             }
             "/thinking" => {
                 match arg {
                     Some("on") => {
                         thinking_state.set_show(true);
-                        println!("Thinking display: on (traces shown dimmed)");
+                        writeln!(output, "Thinking display: on (traces shown dimmed)")?;
                     }
                     Some("off") => {
                         thinking_state.set_show(false);
-                        println!("Thinking display: off (traces hidden)");
+                        writeln!(output, "Thinking display: off (traces hidden)")?;
                     }
                     None => {
                         let new = thinking_state.toggle_show();
-                        println!(
+                        writeln!(
+                            output,
                             "Thinking display: {}",
                             if new {
                                 "on (traces shown dimmed)"
                             } else {
                                 "off (traces hidden)"
                             }
-                        );
+                        )?;
                     }
                     Some(other) => {
-                        eprintln!("Invalid argument '{}'. Usage: /thinking [on|off]", other);
+                        writeln!(
+                            output,
+                            "Invalid argument '{}'. Usage: /thinking [on|off]",
+                            other
+                        )?;
                     }
                 }
                 continue;
@@ -918,17 +1055,20 @@ fn run_chat_repl(
                     Some(val) => match val.parse::<f32>() {
                         Ok(t) if t >= 0.0 => {
                             config.sampling.temperature = t;
-                            println!("Temperature set to {}", t);
+                            writeln!(output, "Temperature set to {}", t)?;
                         }
-                        Ok(_) => eprintln!("Temperature must be >= 0.0"),
-                        Err(_) => {
-                            eprintln!("Invalid temperature value '{}'. Expected a number.", val)
-                        }
+                        Ok(_) => writeln!(output, "Temperature must be >= 0.0")?,
+                        Err(_) => writeln!(
+                            output,
+                            "Invalid temperature value '{}'. Expected a number.",
+                            val
+                        )?,
                     },
-                    None => eprintln!(
+                    None => writeln!(
+                        output,
                         "Usage: /temperature <value>  (current: {})",
                         config.sampling.temperature
-                    ),
+                    )?,
                 }
                 continue;
             }
@@ -936,27 +1076,31 @@ fn run_chat_repl(
                 match arg {
                     Some("off") | Some("none") => {
                         config.sampling.top_k = None;
-                        println!("Top-k sampling disabled.");
+                        writeln!(output, "Top-k sampling disabled.")?;
                     }
                     Some(val) => match val.parse::<usize>() {
                         Ok(k) if k > 0 => {
                             config.sampling.top_k = Some(k);
-                            println!("Top-k set to {}", k);
+                            writeln!(output, "Top-k set to {}", k)?;
                             if config.speculative {
-                                eprintln!("Warning: top-k is ignored in speculative mode.");
+                                writeln!(output, "Warning: top-k is ignored in speculative mode.")?;
                             }
                         }
-                        Ok(_) => eprintln!("Top-k must be > 0. Use '/top-k off' to disable."),
-                        Err(_) => {
-                            eprintln!("Invalid top-k value '{}'. Expected a number or 'off'.", val)
+                        Ok(_) => {
+                            writeln!(output, "Top-k must be > 0. Use '/top-k off' to disable.")?
                         }
+                        Err(_) => writeln!(
+                            output,
+                            "Invalid top-k value '{}'. Expected a number or 'off'.",
+                            val
+                        )?,
                     },
                     None => {
                         let current = match config.sampling.top_k {
                             Some(k) => format!("{}", k),
                             None => "off".to_string(),
                         };
-                        eprintln!("Usage: /top-k <value|off>  (current: {})", current);
+                        writeln!(output, "Usage: /top-k <value|off>  (current: {})", current)?;
                     }
                 }
                 continue;
@@ -965,50 +1109,55 @@ fn run_chat_repl(
                 match arg {
                     Some("off") | Some("none") => {
                         config.sampling.top_p = None;
-                        println!("Top-p (nucleus) sampling disabled.");
+                        writeln!(output, "Top-p (nucleus) sampling disabled.")?;
                     }
                     Some(val) => match val.parse::<f32>() {
                         Ok(p) if (0.0..=1.0).contains(&p) => {
                             config.sampling.top_p = Some(p);
-                            println!("Top-p set to {}", p);
+                            writeln!(output, "Top-p set to {}", p)?;
                             if config.speculative {
-                                eprintln!("Warning: top-p is ignored in speculative mode.");
+                                writeln!(output, "Warning: top-p is ignored in speculative mode.")?;
                             }
                         }
-                        Ok(_) => eprintln!(
+                        Ok(_) => writeln!(
+                            output,
                             "Top-p must be between 0.0 and 1.0. Use '/top-p off' to disable."
-                        ),
-                        Err(_) => {
-                            eprintln!("Invalid top-p value '{}'. Expected a number or 'off'.", val)
-                        }
+                        )?,
+                        Err(_) => writeln!(
+                            output,
+                            "Invalid top-p value '{}'. Expected a number or 'off'.",
+                            val
+                        )?,
                     },
                     None => {
                         let current = match config.sampling.top_p {
                             Some(p) => format!("{}", p),
                             None => "off".to_string(),
                         };
-                        eprintln!("Usage: /top-p <value|off>  (current: {})", current);
+                        writeln!(output, "Usage: /top-p <value|off>  (current: {})", current)?;
                     }
                 }
                 continue;
             }
             "/speculative" => {
                 config.speculative = !config.speculative;
-                println!(
+                writeln!(
+                    output,
                     "Speculative decoding: {}",
                     if config.speculative {
                         "enabled"
                     } else {
                         "disabled"
                     }
-                );
+                )?;
                 if config.speculative
                     && (config.sampling.top_k.is_some() || config.sampling.top_p.is_some())
                 {
-                    eprintln!(
+                    writeln!(
+                        output,
                         "Warning: top-k and top-p are ignored in speculative mode. \
                          Speculative decoding uses its own temperature-based sampling."
-                    );
+                    )?;
                 }
                 continue;
             }
@@ -1017,26 +1166,30 @@ fn run_chat_repl(
                     Some(val) => match val.parse::<usize>() {
                         Ok(n) if n > 0 => {
                             config.max_tokens = n;
-                            println!("Max tokens per response set to {}", n);
+                            writeln!(output, "Max tokens per response set to {}", n)?;
                         }
-                        Ok(_) => eprintln!("Max tokens must be > 0."),
-                        Err(_) => {
-                            eprintln!("Invalid max-tokens value '{}'. Expected a number.", val)
-                        }
+                        Ok(_) => writeln!(output, "Max tokens must be > 0.")?,
+                        Err(_) => writeln!(
+                            output,
+                            "Invalid max-tokens value '{}'. Expected a number.",
+                            val
+                        )?,
                     },
-                    None => eprintln!(
+                    None => writeln!(
+                        output,
                         "Usage: /max-tokens <value>  (current: {})",
                         config.max_tokens
-                    ),
+                    )?,
                 }
                 continue;
             }
             "/debug" => {
                 config.debug = !config.debug;
-                println!(
+                writeln!(
+                    output,
                     "Debug output: {}",
                     if config.debug { "enabled" } else { "disabled" }
-                );
+                )?;
                 continue;
             }
             "/system" => {
@@ -1049,7 +1202,7 @@ fn run_chat_repl(
                         config.system_prompt = None;
                         state.reset();
                         processed_tokens.clear();
-                        println!("System prompt removed. KV cache reset.");
+                        writeln!(output, "System prompt removed. KV cache reset.")?;
                     }
                     Some(msg) if !msg.is_empty() => {
                         // Set or replace system prompt
@@ -1061,7 +1214,7 @@ fn run_chat_repl(
                         config.system_prompt = Some(msg.to_string());
                         state.reset();
                         processed_tokens.clear();
-                        println!("System prompt updated. KV cache reset.");
+                        writeln!(output, "System prompt updated. KV cache reset.")?;
                     }
                     _ => {
                         let current = match config.system_prompt {
@@ -1074,45 +1227,51 @@ fn run_chat_repl(
                             }
                             None => "none".to_string(),
                         };
-                        eprintln!(
+                        writeln!(
+                            output,
                             "Usage: /system <message>  or  /system off  (current: {})",
                             current
-                        );
+                        )?;
                     }
                 }
                 continue;
             }
             "/settings" => {
-                println!("Current settings:");
-                println!("  temperature:  {}", config.sampling.temperature);
-                println!(
+                writeln!(output, "Current settings:")?;
+                writeln!(output, "  temperature:  {}", config.sampling.temperature)?;
+                writeln!(
+                    output,
                     "  top-k:        {}",
                     match config.sampling.top_k {
                         Some(k) => format!("{}", k),
                         None => "off".to_string(),
                     }
-                );
-                println!(
+                )?;
+                writeln!(
+                    output,
                     "  top-p:        {}",
                     match config.sampling.top_p {
                         Some(p) => format!("{}", p),
                         None => "off".to_string(),
                     }
-                );
-                println!(
+                )?;
+                writeln!(
+                    output,
                     "  speculative:  {}",
                     if config.speculative {
                         "enabled"
                     } else {
                         "disabled"
                     }
-                );
-                println!("  max-tokens:   {}", config.max_tokens);
-                println!(
+                )?;
+                writeln!(output, "  max-tokens:   {}", config.max_tokens)?;
+                writeln!(
+                    output,
                     "  debug:        {}",
                     if config.debug { "enabled" } else { "disabled" }
-                );
-                println!(
+                )?;
+                writeln!(
+                    output,
                     "  system:       {}",
                     match config.system_prompt {
                         Some(ref s) => {
@@ -1124,7 +1283,7 @@ fn run_chat_repl(
                         }
                         None => "none".to_string(),
                     }
-                );
+                )?;
                 continue;
             }
             "/context" => {
@@ -1148,12 +1307,14 @@ fn run_chat_repl(
                     .count();
                 let total_messages = history.len();
 
-                println!("Context usage:");
-                println!(
+                writeln!(output, "Context usage:")?;
+                writeln!(
+                    output,
                     "  Processed tokens: {} / {} ({:.1}%)",
                     total_processed, max_seq_len, pct
-                );
-                println!(
+                )?;
+                writeln!(
+                    output,
                     "  Remaining:        {} tokens ({:.1}%)",
                     remaining,
                     if max_seq_len > 0 {
@@ -1161,8 +1322,9 @@ fn run_chat_repl(
                     } else {
                         0.0
                     }
-                );
-                println!(
+                )?;
+                writeln!(
+                    output,
                     "  Conversation:     {} message{}{}",
                     total_messages,
                     if total_messages == 1 { "" } else { "s" },
@@ -1194,14 +1356,24 @@ fn run_chat_repl(
                     } else {
                         String::new()
                     }
-                );
-                println!("  Last response:    {} tokens", last_generation_len);
-                println!("  Max response:     {} tokens", config.max_tokens);
+                )?;
+                writeln!(output, "  Last response:    {} tokens", last_generation_len)?;
+                writeln!(output, "  Max response:     {} tokens", config.max_tokens)?;
                 continue;
             }
             "/save" => {
                 match arg {
-                    Some(path) if !path.is_empty() => {
+                    Some(name) if !name.is_empty() => {
+                        let resolved = match resolve_save_path(save_root, name) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                writeln!(output, "{}", e)?;
+                                continue;
+                            }
+                        };
+                        if let Some(parent) = resolved.parent() {
+                            let _ = fs::create_dir_all(parent);
+                        }
                         let messages: Vec<serde_json::Value> = history
                             .iter()
                             .map(|m| {
@@ -1221,20 +1393,40 @@ fn run_chat_repl(
                             "config": serde_json::Value::Null,
                         });
                         match serde_json::to_string_pretty(&doc) {
-                            Ok(json) => match fs::write(path, &json) {
-                                Ok(()) => println!("Saved {} messages to {}", history.len(), path),
-                                Err(e) => eprintln!("Error writing file '{}': {}", path, e),
+                            Ok(json) => match fs::write(&resolved, &json) {
+                                Ok(()) => writeln!(
+                                    output,
+                                    "Saved {} messages to {}",
+                                    history.len(),
+                                    resolved.display()
+                                )?,
+                                Err(e) => writeln!(
+                                    output,
+                                    "Error writing file '{}': {}",
+                                    resolved.display(),
+                                    e
+                                )?,
                             },
-                            Err(e) => eprintln!("Error serializing conversation: {}", e),
+                            Err(e) => writeln!(output, "Error serializing conversation: {}", e)?,
                         }
                     }
-                    _ => eprintln!("Usage: /save <file>"),
+                    _ => writeln!(output, "Usage: /save <file>")?,
                 }
                 continue;
             }
             "/fullsave" => {
                 match arg {
-                    Some(path) if !path.is_empty() => {
+                    Some(name) if !name.is_empty() => {
+                        let resolved = match resolve_save_path(save_root, name) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                writeln!(output, "{}", e)?;
+                                continue;
+                            }
+                        };
+                        if let Some(parent) = resolved.parent() {
+                            let _ = fs::create_dir_all(parent);
+                        }
                         let messages: Vec<serde_json::Value> = history
                             .iter()
                             .map(|m| {
@@ -1262,35 +1454,58 @@ fn run_chat_repl(
                             "config": config_json,
                         });
                         match serde_json::to_string_pretty(&doc) {
-                            Ok(json) => match fs::write(path, &json) {
-                                Ok(()) => println!(
+                            Ok(json) => match fs::write(&resolved, &json) {
+                                Ok(()) => writeln!(
+                                    output,
                                     "Saved {} messages + config to {}",
                                     history.len(),
-                                    path
-                                ),
-                                Err(e) => eprintln!("Error writing file '{}': {}", path, e),
+                                    resolved.display()
+                                )?,
+                                Err(e) => writeln!(
+                                    output,
+                                    "Error writing file '{}': {}",
+                                    resolved.display(),
+                                    e
+                                )?,
                             },
-                            Err(e) => eprintln!("Error serializing conversation: {}", e),
+                            Err(e) => writeln!(output, "Error serializing conversation: {}", e)?,
                         }
                     }
-                    _ => eprintln!("Usage: /fullsave <file>"),
+                    _ => writeln!(output, "Usage: /fullsave <file>")?,
                 }
                 continue;
             }
             "/load" => {
                 match arg {
-                    Some(path) if !path.is_empty() => {
-                        let data = match fs::read_to_string(path) {
+                    Some(name) if !name.is_empty() => {
+                        let resolved = match resolve_save_path(save_root, name) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                writeln!(output, "{}", e)?;
+                                continue;
+                            }
+                        };
+                        let data = match fs::read_to_string(&resolved) {
                             Ok(d) => d,
                             Err(e) => {
-                                eprintln!("Error reading file '{}': {}", path, e);
+                                writeln!(
+                                    output,
+                                    "Error reading file '{}': {}",
+                                    resolved.display(),
+                                    e
+                                )?;
                                 continue;
                             }
                         };
                         let doc: serde_json::Value = match serde_json::from_str(&data) {
                             Ok(v) => v,
                             Err(e) => {
-                                eprintln!("Error parsing JSON from '{}': {}", path, e);
+                                writeln!(
+                                    output,
+                                    "Error parsing JSON from '{}': {}",
+                                    resolved.display(),
+                                    e
+                                )?;
                                 continue;
                             }
                         };
@@ -1299,9 +1514,10 @@ fn run_chat_repl(
                         let msgs = match doc.get("messages").and_then(|v| v.as_array()) {
                             Some(arr) => arr,
                             None => {
-                                eprintln!(
+                                writeln!(
+                                    output,
                                     "Invalid save file: missing or invalid 'messages' array."
-                                );
+                                )?;
                                 continue;
                             }
                         };
@@ -1312,7 +1528,11 @@ fn run_chat_repl(
                             let role_str = match msg.get("role").and_then(|v| v.as_str()) {
                                 Some(r) => r,
                                 None => {
-                                    eprintln!("Invalid message at index {}: missing 'role'.", i);
+                                    writeln!(
+                                        output,
+                                        "Invalid message at index {}: missing 'role'.",
+                                        i
+                                    )?;
                                     parse_ok = false;
                                     break;
                                 }
@@ -1320,7 +1540,11 @@ fn run_chat_repl(
                             let content = match msg.get("content").and_then(|v| v.as_str()) {
                                 Some(c) => c,
                                 None => {
-                                    eprintln!("Invalid message at index {}: missing 'content'.", i);
+                                    writeln!(
+                                        output,
+                                        "Invalid message at index {}: missing 'content'.",
+                                        i
+                                    )?;
                                     parse_ok = false;
                                     break;
                                 }
@@ -1330,10 +1554,11 @@ fn run_chat_repl(
                                 "user" => ChatRole::User,
                                 "assistant" => ChatRole::Assistant,
                                 other => {
-                                    eprintln!(
+                                    writeln!(
+                                        output,
                                         "Invalid message at index {}: unknown role '{}'.",
                                         i, other
-                                    );
+                                    )?;
                                     parse_ok = false;
                                     break;
                                 }
@@ -1395,18 +1620,19 @@ fn run_chat_repl(
                             }
                         });
 
-                        println!(
+                        writeln!(
+                            output,
                             "Loaded {} messages from {}{}",
                             history.len(),
-                            path,
+                            resolved.display(),
                             if has_config {
                                 " (config restored)"
                             } else {
                                 " (config not included)"
                             }
-                        );
+                        )?;
                     }
-                    _ => eprintln!("Usage: /load <file>"),
+                    _ => writeln!(output, "Usage: /load <file>")?,
                 }
                 continue;
             }
@@ -1415,12 +1641,18 @@ fn run_chat_repl(
                 match history.last() {
                     Some(msg) if msg.role == ChatRole::Assistant => {}
                     _ => {
-                        eprintln!("Nothing to retry: last message is not an assistant response.");
+                        writeln!(
+                            output,
+                            "Nothing to retry: last message is not an assistant response."
+                        )?;
                         continue;
                     }
                 }
                 if last_generation_len == 0 {
-                    eprintln!("Nothing to retry: no previous generation to roll back.");
+                    writeln!(
+                        output,
+                        "Nothing to retry: no previous generation to roll back."
+                    )?;
                     continue;
                 }
                 // Roll back: remove last assistant message, rewind state and token tracking
@@ -1428,42 +1660,73 @@ fn run_chat_repl(
                 let rollback = last_generation_len;
                 state.pos = state.pos.saturating_sub(rollback);
                 processed_tokens.truncate(processed_tokens.len().saturating_sub(rollback));
-                println!("Rolling back {} tokens and regenerating...", rollback);
+                writeln!(
+                    output,
+                    "Rolling back {} tokens and regenerating...",
+                    rollback
+                )?;
                 skip_processing = true;
                 // Don't continue -- fall through to generation
             }
             "/help" => {
-                println!("Commands:");
-                println!("  /quit, /exit, /q   Exit chat");
-                println!("  /clear             Clear conversation history");
-                println!("  /retry             Regenerate last assistant response");
-                println!("  /thinking [on|off] Toggle or set thinking trace visibility");
-                println!(
+                writeln!(output, "Commands:")?;
+                writeln!(output, "  /quit, /exit, /q   Exit chat")?;
+                writeln!(output, "  /clear             Clear conversation history")?;
+                writeln!(
+                    output,
+                    "  /retry             Regenerate last assistant response"
+                )?;
+                writeln!(
+                    output,
+                    "  /thinking [on|off] Toggle or set thinking trace visibility"
+                )?;
+                writeln!(
+                    output,
                     "  /temperature <T>   Set sampling temperature (0.0 = greedy, 1.0+ = creative)"
-                );
-                println!("  /top-k <K|off>     Set or disable top-k sampling");
-                println!("  /top-p <P|off>     Set or disable nucleus (top-p) sampling");
-                println!("  /speculative       Toggle self-speculative decoding");
-                println!("  /max-tokens <N>    Set max tokens per response");
-                println!("  /system <MSG|off>  Set, change, or remove the system prompt");
-                println!("  /debug             Toggle debug output");
-                println!("  /settings          Show all current settings");
-                println!("  /context           Show token usage and context headroom");
-                println!("  /save <file>       Save conversation history to JSON file");
-                println!("  /fullsave <file>   Save conversation + settings to JSON file");
-                println!(
+                )?;
+                writeln!(output, "  /top-k <K|off>     Set or disable top-k sampling")?;
+                writeln!(
+                    output,
+                    "  /top-p <P|off>     Set or disable nucleus (top-p) sampling"
+                )?;
+                writeln!(
+                    output,
+                    "  /speculative       Toggle self-speculative decoding"
+                )?;
+                writeln!(output, "  /max-tokens <N>    Set max tokens per response")?;
+                writeln!(
+                    output,
+                    "  /system <MSG|off>  Set, change, or remove the system prompt"
+                )?;
+                writeln!(output, "  /debug             Toggle debug output")?;
+                writeln!(output, "  /settings          Show all current settings")?;
+                writeln!(
+                    output,
+                    "  /context           Show token usage and context headroom"
+                )?;
+                writeln!(
+                    output,
+                    "  /save <file>       Save conversation history to JSON file"
+                )?;
+                writeln!(
+                    output,
+                    "  /fullsave <file>   Save conversation + settings to JSON file"
+                )?;
+                writeln!(
+                    output,
                     "  /load <file>       Load conversation (and optional settings) from JSON file"
-                );
-                println!("  /help              Show this help");
-                println!();
-                println!("Anything else is sent as a message to the model.");
+                )?;
+                writeln!(output, "  /help              Show this help")?;
+                writeln!(output)?;
+                writeln!(output, "Anything else is sent as a message to the model.")?;
                 continue;
             }
             _ if cmd.starts_with('/') => {
-                eprintln!(
+                writeln!(
+                    output,
                     "Unknown command '{}'. Type /help for available commands.",
                     cmd
-                );
+                )?;
                 continue;
             }
             _ => {}
@@ -1471,7 +1734,7 @@ fn run_chat_repl(
 
         if !skip_processing {
             // Add user message to history
-            history.push(ChatMessage::user(&input));
+            history.push(ChatMessage::user(&user_input));
 
             // Format the full conversation as a prompt
             let prompt_str = chat_template.format_prompt(&history);
@@ -1488,7 +1751,7 @@ fn run_chat_repl(
                 );
                 if trimmed {
                     if config.debug {
-                        eprintln!("Context trimmed; resetting KV cache.");
+                        writeln!(output, "Context trimmed; resetting KV cache.")?;
                     }
                     state.reset();
                     processed_tokens.clear();
@@ -1511,11 +1774,12 @@ fn run_chat_repl(
                     // We need to process from where we left off
                     let new_tokens = &full_tokens[new_start..];
                     if config.debug {
-                        eprintln!(
+                        writeln!(
+                            output,
                             "KV cache reuse: {} cached, {} new tokens to process",
                             new_start,
                             new_tokens.len()
-                        );
+                        )?;
                     }
                     process_tokens(&mut state, new_tokens, config.debug);
                 }
@@ -1531,9 +1795,9 @@ fn run_chat_repl(
         thinking_state.reset();
 
         // Generate the response
-        let result = generate_response(&mut state, last_prompt_token, &eos_ids, &config);
+        let result = generate_response(&mut state, last_prompt_token, &eos_ids, &config, output);
 
-        println!();
+        writeln!(output)?;
 
         // Track length of this generation for /context and /retry
         last_generation_len = result.tokens.len();
@@ -1549,9 +1813,9 @@ fn run_chat_repl(
 
         if config.debug {
             if result.stopped_at_eos {
-                eprintln!("[stopped at EOS]");
+                writeln!(output, "[stopped at EOS]")?;
             } else {
-                eprintln!("[stopped at max_tokens ({})]", config.max_tokens);
+                writeln!(output, "[stopped at max_tokens ({})]", config.max_tokens)?;
             }
         }
 
@@ -1562,7 +1826,7 @@ fn run_chat_repl(
         // (so next turn can compute the correct delta)
         processed_tokens.extend_from_slice(&result.tokens);
 
-        println!();
+        writeln!(output)?;
     }
 
     Ok(())

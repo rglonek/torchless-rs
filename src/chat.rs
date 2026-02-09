@@ -15,6 +15,7 @@
 use crate::model::architecture::ModelArchitecture;
 use crate::tokenizer::Tokenizer;
 use std::cell::Cell;
+use std::io::Write;
 
 /// Role of a message in a conversation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -558,6 +559,30 @@ where
         }
         TokenAction::ThinkingEnd => {
             println!(" [/thinking]{}", ANSI_RESET);
+        }
+        TokenAction::Hide => {}
+    }
+}
+
+/// Display a token to a specific writer according to its [`TokenAction`].
+///
+/// Like [`display_thinking_token`], but writes to the given [`Write`] sink instead of stdout.
+pub fn display_thinking_token_to<F>(output: &mut dyn Write, action: TokenAction, decode: F)
+where
+    F: FnOnce() -> String,
+{
+    match action {
+        TokenAction::Display => {
+            let _ = write!(output, "{}", decode());
+        }
+        TokenAction::DisplayDim => {
+            let _ = write!(output, "{}{}{}", ANSI_DIM, decode(), ANSI_RESET);
+        }
+        TokenAction::ThinkingStart => {
+            let _ = write!(output, "\n{}[thinking] ", ANSI_DIM);
+        }
+        TokenAction::ThinkingEnd => {
+            let _ = writeln!(output, " [/thinking]{}", ANSI_RESET);
         }
         TokenAction::Hide => {}
     }

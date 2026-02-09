@@ -124,11 +124,38 @@ Switch between chat templates (Mistral/LLaMA/Phi/Gemma/Qwen) mid-session.
 
 ---
 
+## Coding Mode -- File Reading and Editing
+
+### 🟡 `@filename` File Context and Editing
+
+Add an interactive coding mode where the user can reference local files using `@filename` syntax, allowing torchless to read file contents into context and suggest or apply modifications.
+
+**Benefits:**
+- Enable code-assistant workflows directly in the terminal
+- Users can reference files in prompts (e.g., `@src/main.rs fix the bug on line 42`)
+- Model can read file contents, reason about them, and propose edits
+- Lightweight alternative to full IDE-integrated AI coding tools
+
+**Implementation needed:**
+- [ ] Parse `@filepath` references in user input and resolve to absolute paths
+- [ ] Read referenced files and inject contents into the prompt context
+- [ ] Add `/edit` or `/code` command to toggle coding mode
+- [ ] Implement structured output parsing for model-proposed edits (e.g., search/replace blocks)
+- [ ] Apply edits to files on disk (with user confirmation)
+- [ ] Handle large files (truncation, line-range selection like `@file:10-50`)
+- [ ] Add `/diff` command to show pending changes before applying
+- [ ] Respect `.gitignore` and prevent reading sensitive files
+
+**Estimated effort:** Medium - requires prompt engineering, file I/O, and a lightweight edit-application layer.
+
+---
+
 ## Summary
 
 | Item | Priority | Status |
 |------|----------|--------|
 | MoE Architecture | 🔴 High | Not started |
+| Coding Mode (`@filename`) | 🟡 Medium | Not started |
 | WebGPU Backend | 🟢 Low | Not started |
 | `/lazy` command | 🟡 Medium | Not started |
 | `/model` command | 🟡 Medium | Not started |

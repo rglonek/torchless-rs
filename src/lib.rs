@@ -8,7 +8,9 @@ pub mod tensor;
 pub mod tokenizer;
 
 // Chat template support
-pub use chat::{display_thinking_token, strip_thinking, ANSI_DIM, ANSI_RESET};
+pub use chat::{
+    display_thinking_token, display_thinking_token_to, strip_thinking, ANSI_DIM, ANSI_RESET,
+};
 pub use chat::{ChatMessage, ChatRole, ChatTemplate, ThinkingState, TokenAction};
 
 // Core loader types

@@ -791,6 +791,26 @@ impl Parameters {
                 .get("first_moe_layer")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
+            head_dim: header
+                .metadata
+                .get("head_dim")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            swiglu_limit: header
+                .metadata
+                .get("swiglu_limit")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.0),
+            attention_sliding_window: header
+                .metadata
+                .get("attention_sliding_window")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            attention_bias: header
+                .metadata
+                .get("attention_bias")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
         };
 
         let tokenizer = Tokenizer::new(header.tokenizer.vocab, header.tokenizer.merges);

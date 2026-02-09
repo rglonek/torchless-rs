@@ -7,6 +7,7 @@
 //! - **Q4_K_M**: 4-bit K-quantization (medium) with super-blocks and min values
 //! - **Q4_K_S**: 4-bit K-quantization (small) - more compact variant
 //! - **Q8_0**: 8-bit quantization with single scale per block
+//! - **MXFP4**: Microscaling FP4 (used by OpenAI GPT-OSS models)
 //!
 //! # Memory Layout
 //!
@@ -37,6 +38,9 @@ pub const QK_K: usize = 256;
 
 /// Number of blocks within a K-quant super-block
 pub const K_SCALE_SIZE: usize = 12;
+
+/// Block size for MXFP4 quantization (32 FP4 values share one scale factor)
+pub const MXFP4_BLOCK_SIZE: usize = 32;
 
 // =============================================================================
 // Q4_0: Basic 4-bit Quantization
@@ -903,6 +907,116 @@ impl QuantizedTensor {
 }
 
 // =============================================================================
+// MXFP4: Microscaling FP4 (OpenAI GPT-OSS)
+// =============================================================================
+
+/// Converts a single FP4 (E2M1) nibble to f32.
+///
+/// FP4 format: 4-bit floating point with 1 sign bit, 2 exponent bits, 1 mantissa bit.
+/// Bit layout: SEEM where S=sign, E=exponent, M=mantissa.
+///
+/// - Normal (E != 0): value = (-1)^S * 2^(E-1) * (1 + M/2)
+/// - Subnormal (E == 0): value = (-1)^S * 0.5 * M
+///
+/// Represents: 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0 (and their negatives).
+#[inline]
+pub fn dequantize_mxfp4_fp4_to_f32(nibble: u8) -> f32 {
+    debug_assert!(nibble <= 15);
+    let sign = (nibble >> 3) & 1;
+    let exponent = (nibble >> 1) & 0x3;
+    let mantissa = nibble & 1;
+
+    let value = if exponent == 0 {
+        // Subnormal: 0.5 * mantissa
+        0.5 * mantissa as f32
+    } else {
+        // Normal: 2^(exponent-1) * (1.0 + mantissa * 0.5)
+        let exp_val = 1u32 << (exponent - 1);
+        exp_val as f32 * (1.0 + mantissa as f32 * 0.5)
+    };
+
+    if sign != 0 {
+        -value
+    } else {
+        value
+    }
+}
+
+/// Dequantizes one MXFP4 block (32 values) from packed bytes.
+///
+/// Takes 16 bytes (MXFP4_BLOCK_SIZE / 2) where each byte contains 2 FP4 values
+/// (lower nibble first, upper nibble second). Each value is multiplied by the scale.
+pub fn dequantize_mxfp4_block(blocks_data: &[u8], scale: f32) -> Vec<f32> {
+    assert!(blocks_data.len() >= MXFP4_BLOCK_SIZE / 2);
+    let mut result = Vec::with_capacity(MXFP4_BLOCK_SIZE);
+    for &byte in blocks_data.iter().take(MXFP4_BLOCK_SIZE / 2) {
+        let low = dequantize_mxfp4_fp4_to_f32(byte & 0x0F);
+        let high = dequantize_mxfp4_fp4_to_f32(byte >> 4);
+        result.push(low * scale);
+        result.push(high * scale);
+    }
+    result
+}
+
+/// Dequantizes an entire MXFP4 tensor.
+///
+/// `blocks_data` contains packed FP4 bytes (2 values per byte).
+/// `scales_data` contains one f32 scale per block of 32 values.
+/// Returns a vector of `total_elements` dequantized f32 values.
+pub fn dequantize_mxfp4(
+    blocks_data: &[u8],
+    scales_data: &[f32],
+    total_elements: usize,
+) -> Vec<f32> {
+    let n_blocks = total_elements.div_ceil(MXFP4_BLOCK_SIZE);
+    assert!(
+        blocks_data.len() >= n_blocks * (MXFP4_BLOCK_SIZE / 2),
+        "blocks_data too short"
+    );
+    assert!(scales_data.len() >= n_blocks, "scales_data too short");
+
+    let mut result = Vec::with_capacity(total_elements);
+    for (block_idx, &scale) in scales_data.iter().enumerate().take(n_blocks) {
+        let block_start = block_idx * (MXFP4_BLOCK_SIZE / 2);
+        let block_bytes = &blocks_data[block_start..block_start + MXFP4_BLOCK_SIZE / 2];
+
+        let block_values = dequantize_mxfp4_block(block_bytes, scale);
+        let elements_remaining = total_elements - result.len();
+        if elements_remaining >= MXFP4_BLOCK_SIZE {
+            result.extend(block_values);
+        } else {
+            result.extend(block_values.into_iter().take(elements_remaining));
+        }
+    }
+    result
+}
+
+/// Dequantizes MXFP4 from raw byte slices.
+///
+/// Interprets `scales_raw` as little-endian f32 (4 bytes per scale).
+/// Calls `dequantize_mxfp4` internally.
+pub fn dequantize_mxfp4_from_raw(
+    blocks_raw: &[u8],
+    scales_raw: &[u8],
+    total_elements: usize,
+) -> Vec<f32> {
+    let n_blocks = total_elements.div_ceil(MXFP4_BLOCK_SIZE);
+    let mut scales = Vec::with_capacity(n_blocks);
+    for i in 0..n_blocks {
+        let offset = i * 4;
+        assert!(scales_raw.len() >= offset + 4, "scales_raw too short");
+        let scale = f32::from_le_bytes([
+            scales_raw[offset],
+            scales_raw[offset + 1],
+            scales_raw[offset + 2],
+            scales_raw[offset + 3],
+        ]);
+        scales.push(scale);
+    }
+    dequantize_mxfp4(blocks_raw, &scales, total_elements)
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -1064,5 +1178,60 @@ mod tests {
         assert_eq!(QuantFormat::Q4_K_M.block_size(), 256);
         assert_eq!(QuantFormat::Q4_K_S.block_size(), 256);
         assert_eq!(QuantFormat::F32.block_size(), 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // MXFP4 tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_dequantize_mxfp4_fp4_to_f32_all_nibbles() {
+        // Positive values (nibbles 0-7)
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(0), 0.0);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(1), 0.5);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(2), 1.0);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(3), 1.5);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(4), 2.0);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(5), 3.0);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(6), 4.0);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(7), 6.0);
+
+        // Negative values (nibbles 8-15)
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(8), -0.0);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(9), -0.5);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(10), -1.0);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(11), -1.5);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(12), -2.0);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(13), -3.0);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(14), -4.0);
+        assert_eq!(dequantize_mxfp4_fp4_to_f32(15), -6.0);
+    }
+
+    #[test]
+    fn test_dequantize_mxfp4_block() {
+        // Create 16 bytes: first byte has nibbles 0 (low) and 1 (high) -> 0.0, 0.5
+        // Second byte: 2 (low), 3 (high) -> 1.0, 1.5, etc.
+        let mut blocks = [0u8; 16];
+        blocks[0] = 0x10; // low=0, high=1
+        blocks[1] = 0x32; // low=2, high=3
+        blocks[2] = 0x54; // low=4, high=5
+        blocks[3] = 0x76; // low=6, high=7
+
+        let scale = 2.0;
+        let result = dequantize_mxfp4_block(&blocks, scale);
+
+        assert_eq!(result.len(), 32);
+        assert_eq!(result[0], 0.0 * scale);
+        assert_eq!(result[1], 0.5 * scale);
+        assert_eq!(result[2], 1.0 * scale);
+        assert_eq!(result[3], 1.5 * scale);
+        assert_eq!(result[4], 2.0 * scale);
+        assert_eq!(result[5], 3.0 * scale);
+        assert_eq!(result[6], 4.0 * scale);
+        assert_eq!(result[7], 6.0 * scale);
+        // Rest are zeros (from unused bytes)
+        for i in 8..32 {
+            assert_eq!(result[i], 0.0);
+        }
     }
 }

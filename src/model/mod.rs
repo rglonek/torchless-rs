@@ -37,10 +37,13 @@ pub use models::{
     DynamicModel,
     // Gemma (Google)
     Gemma,
+    // GPT-OSS (OpenAI MoE)
+    GptOss,
     // LLaMA (Meta)
     LLaMA,
     LazyDeepSeek,
     LazyGemma,
+    LazyGptOss,
     LazyLLaMA,
     LazyPhi,
     LazyQwen,

@@ -11,6 +11,7 @@
 //! - **Phi-3**: Microsoft's efficient model with parallel attention
 //! - **Gemma**: Google's model with GeGLU activation
 //! - **Qwen**: Alibaba's multilingual model
+//! - **GPT-OSS**: OpenAI's open-weight MoE model with attention sinks
 
 use crate::loader::{Config, UnifiedConfig};
 use crate::model::InferenceState;
@@ -31,6 +32,8 @@ pub enum ModelArchitecture {
     Qwen,
     /// DeepSeek MoE models (DeepSeek-V2, V3, R1)
     DeepSeek,
+    /// OpenAI GPT-OSS open-weight MoE models (gpt-oss-120b, gpt-oss-20b)
+    GptOss,
     /// Unknown/unsupported architecture
     Unknown,
 }
@@ -44,6 +47,7 @@ impl std::fmt::Display for ModelArchitecture {
             ModelArchitecture::Gemma => write!(f, "Gemma"),
             ModelArchitecture::Qwen => write!(f, "Qwen"),
             ModelArchitecture::DeepSeek => write!(f, "DeepSeek"),
+            ModelArchitecture::GptOss => write!(f, "GPT-OSS"),
             ModelArchitecture::Unknown => write!(f, "Unknown"),
         }
     }
@@ -62,6 +66,7 @@ impl ModelArchitecture {
             "deepseek" | "deepseek_v2" | "deepseek_v3" | "deepseek-ai" => {
                 ModelArchitecture::DeepSeek
             }
+            "gpt_oss" | "gptoss" | "gpt-oss" | "gptossforcausallm" => ModelArchitecture::GptOss,
             _ => ModelArchitecture::Unknown,
         }
     }
@@ -207,6 +212,28 @@ impl TensorNamePattern {
         }
     }
 
+    /// GPT-OSS model naming pattern (OpenAI MoE)
+    /// Attention tensors follow Mistral/LLaMA convention.
+    /// MoE expert tensors use batched format (handled in model file).
+    pub fn gpt_oss() -> Self {
+        Self {
+            embed_tokens: "model.embed_tokens.weight",
+            final_norm: "model.norm.weight",
+            lm_head: "lm_head.weight",
+            layer_prefix: "model.layers.{}",
+            input_layernorm: "input_layernorm.weight",
+            post_attention_layernorm: "post_attention_layernorm.weight",
+            q_proj: "self_attn.q_proj.weight",
+            k_proj: "self_attn.k_proj.weight",
+            v_proj: "self_attn.v_proj.weight",
+            o_proj: "self_attn.o_proj.weight",
+            // MoE experts use batched format; these are not used for GPT-OSS MoE layers
+            gate_proj: "mlp.gate_proj.weight",
+            up_proj: "mlp.up_proj.weight",
+            down_proj: "mlp.down_proj.weight",
+        }
+    }
+
     /// Get pattern for architecture
     pub fn for_architecture(arch: ModelArchitecture) -> Self {
         match arch {
@@ -216,6 +243,7 @@ impl TensorNamePattern {
             ModelArchitecture::Gemma => Self::gemma(),
             ModelArchitecture::Qwen => Self::qwen(),
             ModelArchitecture::DeepSeek => Self::deepseek(),
+            ModelArchitecture::GptOss => Self::gpt_oss(),
             ModelArchitecture::Unknown => Self::mistral(), // Default
         }
     }
@@ -388,6 +416,8 @@ pub struct ArchitectureConfig {
     pub is_moe: bool,
     /// MoE tensor naming patterns (only used when is_moe is true)
     pub moe_tensor_names: Option<MoeTensorNamePattern>,
+    /// Whether attention projections have bias terms (GPT-OSS)
+    pub attention_bias: bool,
 }
 
 /// RoPE scaling configuration
@@ -447,6 +477,7 @@ impl Default for ArchitectureConfig {
             parallel_residual: false,
             is_moe: false,
             moe_tensor_names: None,
+            attention_bias: false,
         }
     }
 }
@@ -466,6 +497,7 @@ impl ArchitectureConfig {
             parallel_residual: false,
             is_moe: false,
             moe_tensor_names: None,
+            attention_bias: false,
         }
     }
 
@@ -483,6 +515,7 @@ impl ArchitectureConfig {
             parallel_residual: false,
             is_moe: false,
             moe_tensor_names: None,
+            attention_bias: false,
         }
     }
 
@@ -503,6 +536,7 @@ impl ArchitectureConfig {
             parallel_residual: false,
             is_moe: false,
             moe_tensor_names: None,
+            attention_bias: false,
         }
     }
 
@@ -520,6 +554,7 @@ impl ArchitectureConfig {
             parallel_residual: true, // Phi uses parallel residuals
             is_moe: false,
             moe_tensor_names: None,
+            attention_bias: false,
         }
     }
 
@@ -537,6 +572,7 @@ impl ArchitectureConfig {
             parallel_residual: false,
             is_moe: false,
             moe_tensor_names: None,
+            attention_bias: false,
         }
     }
 
@@ -554,6 +590,7 @@ impl ArchitectureConfig {
             parallel_residual: false,
             is_moe: false,
             moe_tensor_names: None,
+            attention_bias: false,
         }
     }
 
@@ -571,6 +608,28 @@ impl ArchitectureConfig {
             parallel_residual: false,
             is_moe: true,
             moe_tensor_names: Some(MoeTensorNamePattern::deepseek()),
+            attention_bias: false,
+        }
+    }
+
+    /// Create config for GPT-OSS MoE architecture (OpenAI)
+    pub fn gpt_oss() -> Self {
+        Self {
+            architecture: ModelArchitecture::GptOss,
+            tensor_names: TensorNamePattern::gpt_oss(),
+            tie_embeddings: false,
+            fused_qkv: false,
+            fused_gate_up: false,
+            rope_scaling: RopeScaling::YaRN {
+                factor: 32.0,
+                original_max_position: 4096,
+            },
+            activation: ActivationType::SwiGLU,
+            norm_type: NormType::RMSNorm,
+            parallel_residual: false,
+            is_moe: true,
+            moe_tensor_names: None, // GPT-OSS uses batched expert format, handled in model file
+            attention_bias: true,
         }
     }
 
@@ -583,6 +642,7 @@ impl ArchitectureConfig {
             ModelArchitecture::Gemma => Self::gemma(),
             ModelArchitecture::Qwen => Self::qwen(),
             ModelArchitecture::DeepSeek => Self::deepseek(),
+            ModelArchitecture::GptOss => Self::gpt_oss(),
             ModelArchitecture::Unknown => Self::mistral(), // Default to Mistral
         }
     }
@@ -592,7 +652,16 @@ impl ArchitectureConfig {
 pub fn detect_architecture_from_tensors(tensor_names: &[String]) -> ModelArchitecture {
     let names_set: HashSet<&str> = tensor_names.iter().map(|s| s.as_str()).collect();
 
-    // Check for DeepSeek/MoE patterns (experts in MLP layers)
+    // Check for GPT-OSS patterns (batched experts with MXFP4 blocks + attention sinks)
+    // GPT-OSS uses: model.layers.*.mlp.experts.gate_up_proj_blocks and *.self_attn.sinks
+    if names_set
+        .iter()
+        .any(|n| n.contains("self_attn.sinks") || n.contains("gate_up_proj_blocks"))
+    {
+        return ModelArchitecture::GptOss;
+    }
+
+    // Check for DeepSeek/MoE patterns (per-expert tensors in MLP layers)
     // DeepSeek uses: model.layers.*.mlp.experts.*.gate_proj.weight
     if names_set
         .iter()
@@ -643,6 +712,11 @@ pub fn detect_architecture_from_config(config: &UnifiedConfig) -> ModelArchitect
         let detected = ModelArchitecture::from_str(arch);
         if detected != ModelArchitecture::Unknown {
             return detected;
+        }
+        // Check for HuggingFace-style architecture class names
+        let lower = arch.to_lowercase();
+        if lower.contains("gptoss") || lower.contains("gpt_oss") {
+            return ModelArchitecture::GptOss;
         }
     }
 
@@ -831,6 +905,53 @@ mod tests {
         assert_eq!(config.architecture, ModelArchitecture::DeepSeek);
         assert!(config.is_moe);
         assert!(config.moe_tensor_names.is_some());
+        assert!(!config.tie_embeddings);
+        assert!(!config.fused_qkv);
+    }
+
+    #[test]
+    fn test_gpt_oss_architecture_from_str() {
+        assert_eq!(
+            ModelArchitecture::from_str("gpt_oss"),
+            ModelArchitecture::GptOss
+        );
+        assert_eq!(
+            ModelArchitecture::from_str("gptoss"),
+            ModelArchitecture::GptOss
+        );
+        assert_eq!(
+            ModelArchitecture::from_str("gpt-oss"),
+            ModelArchitecture::GptOss
+        );
+        assert_eq!(
+            ModelArchitecture::from_str("GptOssForCausalLM"),
+            ModelArchitecture::GptOss
+        );
+    }
+
+    #[test]
+    fn test_gpt_oss_detection_from_tensors() {
+        let gpt_oss_tensors = vec![
+            "model.layers.0.self_attn.q_proj.weight".to_string(),
+            "model.layers.0.self_attn.sinks".to_string(),
+            "model.layers.0.mlp.router.weight".to_string(),
+            "model.layers.0.mlp.experts.gate_up_proj_blocks".to_string(),
+            "model.layers.0.mlp.experts.gate_up_proj_scales".to_string(),
+            "model.layers.0.mlp.experts.down_proj_blocks".to_string(),
+        ];
+        assert_eq!(
+            detect_architecture_from_tensors(&gpt_oss_tensors),
+            ModelArchitecture::GptOss
+        );
+    }
+
+    #[test]
+    fn test_gpt_oss_arch_config() {
+        let config = ArchitectureConfig::gpt_oss();
+        assert_eq!(config.architecture, ModelArchitecture::GptOss);
+        assert!(config.is_moe);
+        assert!(config.attention_bias);
+        assert!(config.moe_tensor_names.is_none()); // batched format, not per-expert
         assert!(!config.tie_embeddings);
         assert!(!config.fused_qkv);
     }

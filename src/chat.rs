@@ -11,6 +11,7 @@
 //! - **Phi**: `<|user|>` / `<|assistant|>` / `<|end|>` format
 //! - **Gemma**: `<start_of_turn>` / `<end_of_turn>` format
 //! - **Qwen**: `<|im_start|>` / `<|im_end|>` format
+//! - **GPT-OSS**: OpenAI Harmony format (ChatML-compatible)
 
 use crate::model::architecture::ModelArchitecture;
 use crate::tokenizer::Tokenizer;
@@ -80,6 +81,9 @@ pub enum ChatTemplate {
     Gemma,
     /// Qwen: `<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n`
     Qwen,
+    /// GPT-OSS: OpenAI Harmony format (ChatML-compatible for basic chat)
+    /// Uses `<|im_start|>` / `<|im_end|>` with Harmony-style system prompt
+    GptOss,
 }
 
 impl ChatTemplate {
@@ -93,6 +97,8 @@ impl ChatTemplate {
             ModelArchitecture::Qwen => Some(ChatTemplate::Qwen),
             // DeepSeek uses a similar chat format to Qwen (ChatML-style)
             ModelArchitecture::DeepSeek => Some(ChatTemplate::Qwen),
+            // GPT-OSS uses Harmony format (ChatML-compatible for basic chat)
+            ModelArchitecture::GptOss => Some(ChatTemplate::GptOss),
             ModelArchitecture::Unknown => None,
         }
     }
@@ -107,6 +113,7 @@ impl ChatTemplate {
             ChatTemplate::Phi => &["<|end|>", "<|endoftext|>"],
             ChatTemplate::Gemma => &["<end_of_turn>"],
             ChatTemplate::Qwen => &["<|im_end|>", "<|endoftext|>"],
+            ChatTemplate::GptOss => &["<|im_end|>", "<|endoftext|>"],
         }
     }
 
@@ -129,6 +136,7 @@ impl ChatTemplate {
         match self {
             ChatTemplate::Qwen => Some(("<think>", "</think>")),
             ChatTemplate::LLaMA => Some(("<think>", "</think>")),
+            ChatTemplate::GptOss => Some(("<think>", "</think>")),
             _ => None, // Mistral/Phi/Gemma don't have distilled thinking variants
         }
     }
@@ -159,6 +167,7 @@ impl ChatTemplate {
             ChatTemplate::Phi => Self::format_phi(messages),
             ChatTemplate::Gemma => Self::format_gemma(messages),
             ChatTemplate::Qwen => Self::format_qwen(messages),
+            ChatTemplate::GptOss => Self::format_gpt_oss(messages),
         }
     }
 
@@ -367,6 +376,39 @@ impl ChatTemplate {
     /// <|im_start|>assistant
     /// ```
     fn format_qwen(messages: &[ChatMessage]) -> String {
+        let mut prompt = String::new();
+
+        for msg in messages {
+            let role_name = match msg.role {
+                ChatRole::System => "system",
+                ChatRole::User => "user",
+                ChatRole::Assistant => "assistant",
+            };
+            prompt.push_str(&format!(
+                "<|im_start|>{}\n{}<|im_end|>\n",
+                role_name, msg.content
+            ));
+        }
+
+        // Prompt the assistant to generate
+        prompt.push_str("<|im_start|>assistant\n");
+
+        prompt
+    }
+
+    /// GPT-OSS format (Harmony / ChatML-compatible):
+    /// ```text
+    /// <|im_start|>system
+    /// {system}<|im_end|>
+    /// <|im_start|>user
+    /// {user}<|im_end|>
+    /// <|im_start|>assistant
+    /// {assistant}<|im_end|>
+    /// <|im_start|>user
+    /// {user}<|im_end|>
+    /// <|im_start|>assistant
+    /// ```
+    fn format_gpt_oss(messages: &[ChatMessage]) -> String {
         let mut prompt = String::new();
 
         for msg in messages {

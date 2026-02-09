@@ -62,6 +62,20 @@ pub struct Config {
     /// Index of the first layer that uses MoE (layers before this are dense)
     #[serde(default)]
     pub first_moe_layer: usize,
+
+    // GPT-OSS specific configuration
+    /// Explicit head dimension (0 = compute from hidden_size / n_heads)
+    #[serde(default)]
+    pub head_dim: usize,
+    /// SwiGLU clamping limit (0.0 = no clamping). GPT-OSS uses 7.0.
+    #[serde(default)]
+    pub swiglu_limit: f32,
+    /// Sliding window size for alternating attention layers (0 = no sliding window)
+    #[serde(default)]
+    pub attention_sliding_window: usize,
+    /// Whether attention projections have bias terms
+    #[serde(default)]
+    pub attention_bias: bool,
 }
 
 #[derive(Debug, Deserialize)]

@@ -215,6 +215,16 @@ pub struct UnifiedConfig {
     pub moe_intermediate_size: Option<usize>,
     /// First layer index that uses MoE (layers before are dense)
     pub first_moe_layer: Option<usize>,
+
+    // GPT-OSS specific configuration
+    /// Explicit head dimension
+    pub head_dim: Option<usize>,
+    /// SwiGLU clamping limit
+    pub swiglu_limit: Option<f32>,
+    /// Sliding window for alternating attention layers
+    pub attention_sliding_window: Option<usize>,
+    /// Whether attention projections have bias
+    pub attention_bias: Option<bool>,
 }
 
 impl UnifiedModelData {
@@ -257,6 +267,26 @@ impl UnifiedModelData {
             },
             first_moe_layer: if params.config.first_moe_layer > 0 {
                 Some(params.config.first_moe_layer)
+            } else {
+                None
+            },
+            head_dim: if params.config.head_dim > 0 {
+                Some(params.config.head_dim)
+            } else {
+                None
+            },
+            swiglu_limit: if params.config.swiglu_limit > 0.0 {
+                Some(params.config.swiglu_limit)
+            } else {
+                None
+            },
+            attention_sliding_window: if params.config.attention_sliding_window > 0 {
+                Some(params.config.attention_sliding_window)
+            } else {
+                None
+            },
+            attention_bias: if params.config.attention_bias {
+                Some(true)
             } else {
                 None
             },

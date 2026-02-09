@@ -38,6 +38,10 @@ fn test_config_deserialization() {
         n_shared_experts: 0,
         moe_intermediate_size: 0,
         first_moe_layer: 0,
+        head_dim: 0,
+        swiglu_limit: 0.0,
+        attention_sliding_window: 0,
+        attention_bias: false,
     };
 
     assert_eq!(config.hidden_size, 4096);

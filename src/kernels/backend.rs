@@ -1177,13 +1177,6 @@ fn get_system_memory() -> usize {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        // Windows MEMORYSTATUS would require windows-sys crate
-        // Return reasonable default
-        return 16 * 1024 * 1024 * 1024; // 16 GB default
-    }
-
     16 * 1024 * 1024 * 1024 // 16 GB default
 }
 

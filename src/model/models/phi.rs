@@ -645,6 +645,7 @@ impl Model for LazyPhi<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ActivationType;
 
     #[test]
     fn test_gelu_tanh() {

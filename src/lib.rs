@@ -47,7 +47,7 @@ pub use loader::formats::safetensors::{
 };
 
 // Model types
-pub use model::{ArenaInferenceState, InferenceState, LazyMistral, Mistral};
+pub use model::{ArenaInferenceState, InferenceState, KVCache, KVDtype, LazyMistral, Mistral};
 
 // =============================================================================
 // Phase 8: Multi-Architecture Support

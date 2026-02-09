@@ -200,8 +200,10 @@ wget https://huggingface.co/TheBloke/Mistral-7B-v0.1-GGUF/resolve/main/mistral-7
 
 | Mode | Memory | Best For |
 |------|--------|----------|
-| Eager (`Mistral`) | ~25GB | Fast inference, high-memory systems |
-| Lazy (`LazyMistral`) | <2GB | Memory-constrained environments |
+| Eager (native format) | ~15 GB (FP16 7B) / ~5 GB (Q4 7B) | Fast inference, high-memory systems |
+| Lazy (`LazyMistral`) | <2 GB base + KV cache | Memory-constrained environments |
+
+KV cache uses FP16 by default (`--kv-dtype f16`). Use `--kv-dtype f32` for full precision.
 
 ## Next Steps
 

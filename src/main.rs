@@ -7,8 +7,8 @@ use torchless::{
     apply_edit, coding_system_prompt, display_thinking_token_to, expand_file_references,
     format_edit_diff, generate, generate_lazy, generate_lazy_until_eos, generate_until_eos,
     init_backend, parse_edit_blocks, print_backend_summary, strip_thinking, BackendPreference,
-    ChatMessage, ChatRole, ChatTemplate, GenerationResult, InferenceState, LazyMistral, Mistral,
-    Parameters, PendingEdit, SamplingConfig, SelfSpeculativeDecoder, SpeculativeConfig,
+    ChatMessage, ChatRole, ChatTemplate, GenerationResult, InferenceState, KVDtype, LazyMistral,
+    Mistral, Parameters, PendingEdit, SamplingConfig, SelfSpeculativeDecoder, SpeculativeConfig,
     ThinkingState,
 };
 
@@ -60,6 +60,7 @@ fn print_usage(program: &str) {
         "  --chat-save-root <DIR> Root directory for per-user chat saves (required with --socket)"
     );
     eprintln!("  --list-backends       List available backends and exit");
+    eprintln!("  --kv-dtype <TYPE>     KV cache precision: f16 (default, half memory) or f32");
     eprintln!("  --debug               Enable debug output");
     eprintln!("  --help                Show this help message");
     eprintln!();
@@ -166,6 +167,7 @@ fn main() -> anyhow::Result<()> {
     let mut top_p_arg: Option<f32> = None;
     let mut lazy = false;
     let mut speculative = false;
+    let mut kv_dtype = KVDtype::F16; // default to FP16
     let mut show_thinking = false;
     let mut list_backends = false;
     let mut chat_mode = false;
@@ -312,6 +314,24 @@ fn main() -> anyhow::Result<()> {
                 }));
                 i += 2;
             }
+            "--kv-dtype" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --kv-dtype requires a value (f16 or f32)");
+                    std::process::exit(1);
+                }
+                kv_dtype = match args[i + 1].to_lowercase().as_str() {
+                    "f16" | "fp16" => KVDtype::F16,
+                    "f32" | "fp32" => KVDtype::F32,
+                    _ => {
+                        eprintln!(
+                            "Error: invalid --kv-dtype value '{}'. Use f16 or f32",
+                            args[i + 1]
+                        );
+                        std::process::exit(1);
+                    }
+                };
+                i += 2;
+            }
             arg if arg.starts_with('-') => {
                 eprintln!("Error: unknown option '{}'", arg);
                 eprintln!("Use --help for usage information.");
@@ -374,6 +394,7 @@ fn main() -> anyhow::Result<()> {
             speculative,
             show_thinking,
             debug,
+            kv_dtype,
         );
     }
 
@@ -402,6 +423,7 @@ fn main() -> anyhow::Result<()> {
             speculative,
             show_thinking,
             debug,
+            kv_dtype,
         );
     }
 
@@ -441,7 +463,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         println!("Initializing inference state...");
-        let mut state = InferenceState::with_seq_len(model.config.clone(), max_seq_len);
+        let mut state = InferenceState::with_seq_len(model.config.clone(), max_seq_len, kv_dtype);
 
         println!("Tokenizing prompt: {}", prompt);
         let tokens = model.tokenizer.encode(prompt);
@@ -514,7 +536,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         println!("Initializing inference state...");
-        let mut state = InferenceState::with_seq_len(model.config.clone(), max_seq_len);
+        let mut state = InferenceState::with_seq_len(model.config.clone(), max_seq_len, kv_dtype);
 
         println!("Tokenizing prompt: {}", prompt);
         let tokens = model.tokenizer.encode(prompt);
@@ -717,6 +739,7 @@ fn run_chat(
     speculative: bool,
     show_thinking: bool,
     debug: bool,
+    kv_dtype: KVDtype,
 ) -> anyhow::Result<()> {
     // Initialize backend
     let backend = init_backend(backend_pref)?;
@@ -739,7 +762,7 @@ fn run_chat(
             max_seq_len, model.config.max_position_embeddings, max_tokens
         );
 
-        let state = InferenceState::with_seq_len(model.config.clone(), max_seq_len);
+        let state = InferenceState::with_seq_len(model.config.clone(), max_seq_len, kv_dtype);
 
         // Initialize thinking state (auto-detects from tokenizer vocabulary)
         let chat_template = ChatTemplate::Mistral; // resolved again inside run_chat_repl
@@ -835,7 +858,7 @@ fn run_chat(
             max_seq_len, model.config.max_position_embeddings, max_tokens
         );
 
-        let state = InferenceState::with_seq_len(model.config.clone(), max_seq_len);
+        let state = InferenceState::with_seq_len(model.config.clone(), max_seq_len, kv_dtype);
 
         // Initialize thinking state (auto-detects from tokenizer vocabulary)
         let chat_template = ChatTemplate::Mistral;

@@ -13,7 +13,7 @@
 //! - heaptrack: `heaptrack cargo test --release`
 
 use std::mem::size_of;
-use torchless::{Config, InferenceState, Mistral, Parameters};
+use torchless::{Config, InferenceState, KVDtype, Mistral, Parameters};
 
 #[cfg(feature = "parallel")]
 use torchless::LazyMistral;
@@ -80,8 +80,8 @@ fn estimate_inference_state_memory(config: &Config, max_seq_len: usize) -> usize
     total += config.n_kv_heads * head_dim * size_of::<f32>(); // k_state
     total += config.n_kv_heads * head_dim * size_of::<f32>(); // v_state
 
-    // KV cache: 2 * n_layers * n_kv_heads * max_seq_len * head_dim
-    total += 2 * config.n_layers * config.n_kv_heads * max_seq_len * head_dim * size_of::<f32>();
+    // KV cache: 2 * n_layers * n_kv_heads * max_seq_len * head_dim (F16 = 2 bytes per element)
+    total += 2 * config.n_layers * config.n_kv_heads * max_seq_len * head_dim * size_of::<u16>();
 
     // Attention outputs: scores, context, context_flat
     total += config.n_heads * max_seq_len * size_of::<f32>(); // scores
@@ -111,32 +111,30 @@ fn test_inference_state_memory_estimate() {
     );
 
     // Create the actual state with a known seq len and verify it's roughly as expected
-    let state = InferenceState::with_seq_len(config.clone(), TEST_SEQ_LEN);
+    let state = InferenceState::with_seq_len(config.clone(), TEST_SEQ_LEN, KVDtype::F16);
 
-    // Count actual array elements
-    let mut actual_elements = 0usize;
-    actual_elements += state.hidden_state.len();
-    actual_elements += state.residual.len();
-    actual_elements += state.inv_freq.len();
-    actual_elements += state.cos.len();
-    actual_elements += state.sin.len();
-    actual_elements += state.q_flat.len();
-    actual_elements += state.k_flat.len();
-    actual_elements += state.v_flat.len();
-    actual_elements += state.q_state.len();
-    actual_elements += state.k_state.len();
-    actual_elements += state.v_state.len();
-    actual_elements += state.k_cache.len();
-    actual_elements += state.v_cache.len();
-    actual_elements += state.scores.len();
-    actual_elements += state.context.len();
-    actual_elements += state.context_flat.len();
-    actual_elements += state.mlp_gate.len();
-    actual_elements += state.mlp_up.len();
-    actual_elements += state.logits.len();
-    actual_elements += state.probs.len();
-
-    let actual_bytes = actual_elements * size_of::<f32>();
+    // Count actual bytes: most arrays use f32 (4 bytes), KV cache uses F16 (2 bytes)
+    let mut actual_bytes = 0usize;
+    actual_bytes += state.hidden_state.len() * size_of::<f32>();
+    actual_bytes += state.residual.len() * size_of::<f32>();
+    actual_bytes += state.inv_freq.len() * size_of::<f32>();
+    actual_bytes += state.cos.len() * size_of::<f32>();
+    actual_bytes += state.sin.len() * size_of::<f32>();
+    actual_bytes += state.q_flat.len() * size_of::<f32>();
+    actual_bytes += state.k_flat.len() * size_of::<f32>();
+    actual_bytes += state.v_flat.len() * size_of::<f32>();
+    actual_bytes += state.q_state.len() * size_of::<f32>();
+    actual_bytes += state.k_state.len() * size_of::<f32>();
+    actual_bytes += state.v_state.len() * size_of::<f32>();
+    actual_bytes += state.k_cache.size_bytes();
+    actual_bytes += state.v_cache.size_bytes();
+    actual_bytes += state.scores.len() * size_of::<f32>();
+    actual_bytes += state.context.len() * size_of::<f32>();
+    actual_bytes += state.context_flat.len() * size_of::<f32>();
+    actual_bytes += state.mlp_gate.len() * size_of::<f32>();
+    actual_bytes += state.mlp_up.len() * size_of::<f32>();
+    actual_bytes += state.logits.len() * size_of::<f32>();
+    actual_bytes += state.probs.len() * size_of::<f32>();
     println!(
         "Actual InferenceState array memory: {} bytes ({:.2} MB)",
         actual_bytes,
@@ -316,9 +314,9 @@ fn test_kv_cache_memory() {
     let head_dim = config.hidden_size / config.n_heads;
     const TEST_SEQ_LEN: usize = 500;
 
-    // KV cache: 2 tensors of shape [n_layers, n_kv_heads, max_seq_len, head_dim]
+    // KV cache: 2 tensors of shape [n_layers, n_kv_heads, max_seq_len, head_dim] (F16 = 2 bytes)
     let kv_cache_size =
-        2 * config.n_layers * config.n_kv_heads * TEST_SEQ_LEN * head_dim * size_of::<f32>();
+        2 * config.n_layers * config.n_kv_heads * TEST_SEQ_LEN * head_dim * size_of::<u16>();
 
     println!(
         "KV cache size: {} bytes ({:.2} MB)",
@@ -327,9 +325,9 @@ fn test_kv_cache_memory() {
     );
 
     // Create state with a known seq len and verify KV cache sizes
-    let state = InferenceState::with_seq_len(config.clone(), TEST_SEQ_LEN);
-    let actual_k_cache = state.k_cache.len() * size_of::<f32>();
-    let actual_v_cache = state.v_cache.len() * size_of::<f32>();
+    let state = InferenceState::with_seq_len(config.clone(), TEST_SEQ_LEN, KVDtype::F16);
+    let actual_k_cache = state.k_cache.size_bytes();
+    let actual_v_cache = state.v_cache.size_bytes();
 
     assert_eq!(
         actual_k_cache + actual_v_cache,
@@ -337,9 +335,9 @@ fn test_kv_cache_memory() {
         "KV cache size mismatch"
     );
 
-    // For a real model, print what this would be:
+    // For a real model, print what this would be (F16):
     // Mistral-7B: n_layers=32, n_kv_heads=8, head_dim=128
-    let real_kv_cache = 2 * 32 * 8 * TEST_SEQ_LEN * 128 * size_of::<f32>();
+    let real_kv_cache = 2 * 32 * 8 * TEST_SEQ_LEN * 128 * size_of::<u16>();
     println!(
         "Real Mistral-7B KV cache (seq_len={}): {:.2} MB",
         TEST_SEQ_LEN,

@@ -22,7 +22,7 @@
 use crate::kernels;
 use crate::loader::{Config, Parameters};
 use anyhow::Result;
-use ndarray::{s, Array1, Array2};
+use ndarray::{s, Array1, Array2, ArrayView2};
 
 #[cfg(feature = "parallel")]
 use crate::kernels::parallel::{
@@ -285,7 +285,7 @@ impl ParallelAttention {
                 for i in 0..seq_len {
                     let mut dot = 0.0f32;
                     for d in 0..head_dim {
-                        dot += state.k_cache[[self.layer_idx, kv_head, i, d]] * q_head[d];
+                        dot += state.k_cache.get(self.layer_idx, kv_head, i, d) * q_head[d];
                     }
                     scores[i] = dot * scale;
                 }
@@ -307,7 +307,7 @@ impl ParallelAttention {
                 for i in 0..seq_len {
                     let w = scores[i];
                     for d in 0..head_dim {
-                        context[d] += w * state.v_cache[[self.layer_idx, kv_head, i, d]];
+                        context[d] += w * state.v_cache.get(self.layer_idx, kv_head, i, d);
                     }
                 }
 
@@ -382,22 +382,24 @@ impl ParallelAttention {
             let seq_len = state.pos + 1;
 
             let q_head = state.q_state.row(h);
-            let k_cache_view = state
+            let k_data = state
                 .k_cache
-                .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
+                .get_slice_f32(self.layer_idx, kv_head, seq_len);
+            let k_arr = ArrayView2::from_shape((seq_len, head_dim), &k_data).unwrap();
 
             {
                 let mut scores_slice = state.scores.slice_mut(s![h, ..seq_len]);
-                kernels::compute_attention_scores(q_head, k_cache_view, &mut scores_slice, scale);
+                kernels::compute_attention_scores(q_head, k_arr, &mut scores_slice, scale);
                 kernels::softmax_view(&mut scores_slice);
             }
 
-            let v_cache_view = state
+            let v_data = state
                 .v_cache
-                .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
+                .get_slice_f32(self.layer_idx, kv_head, seq_len);
+            let v_arr = ArrayView2::from_shape((seq_len, head_dim), &v_data).unwrap();
             let scores_view = state.scores.slice(s![h, ..seq_len]);
             let mut context_row = state.context.slice_mut(s![h, ..]);
-            kernels::weighted_sum_rows(scores_view, v_cache_view, &mut context_row);
+            kernels::weighted_sum_rows(scores_view, v_arr, &mut context_row);
         }
 
         for h in 0..state.config.n_heads {

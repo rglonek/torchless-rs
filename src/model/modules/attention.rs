@@ -1,7 +1,7 @@
 use super::super::InferenceState;
 use crate::kernels;
 use crate::loader::WeightMatrix;
-use ndarray::s;
+use ndarray::{s, ArrayView2};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -92,31 +92,32 @@ impl Attention {
             // Get query for this head: [head_dim] (view, no allocation)
             let q_head = state.q_state.row(h);
 
-            // Get K cache view for this KV head up to current position: [seq_len, head_dim]
-            // Use view directly instead of cloning with to_owned()
-            let k_cache_view = state
+            // Get K cache as f32 slice for this KV head: [seq_len, head_dim]
+            let k_data = state
                 .k_cache
-                .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
+                .get_slice_f32(self.layer_idx, kv_head, seq_len);
+            let k_arr = ArrayView2::from_shape((seq_len, head_dim), &k_data).unwrap();
 
             // Compute attention scores directly into pre-allocated scores buffer
             // Use the h-th row of the scores matrix, sliced to seq_len
             {
                 let mut scores_slice = state.scores.slice_mut(s![h, ..seq_len]);
-                kernels::compute_attention_scores(q_head, k_cache_view, &mut scores_slice, scale);
+                kernels::compute_attention_scores(q_head, k_arr, &mut scores_slice, scale);
 
                 // Softmax in-place (use view variant to avoid allocation)
                 kernels::softmax_view(&mut scores_slice);
             }
 
-            // Get V cache view for this KV head: [seq_len, head_dim] (view, no allocation)
-            let v_cache_view = state
+            // Get V cache as f32 slice for this KV head: [seq_len, head_dim]
+            let v_data = state
                 .v_cache
-                .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
+                .get_slice_f32(self.layer_idx, kv_head, seq_len);
+            let v_arr = ArrayView2::from_shape((seq_len, head_dim), &v_data).unwrap();
 
             // Compute weighted sum directly into context[h, :] (no allocation)
             let scores_view = state.scores.slice(s![h, ..seq_len]);
             let mut context_row = state.context.slice_mut(s![h, ..]);
-            kernels::weighted_sum_rows(scores_view, v_cache_view, &mut context_row);
+            kernels::weighted_sum_rows(scores_view, v_arr, &mut context_row);
         }
 
         // Flatten context into pre-allocated context_flat buffer (no clone)
@@ -195,7 +196,7 @@ impl Attention {
                 for i in 0..seq_len {
                     let mut dot = 0.0f32;
                     for d in 0..head_dim {
-                        dot += state.k_cache[[self.layer_idx, kv_head, i, d]] * q_head[d];
+                        dot += state.k_cache.get(self.layer_idx, kv_head, i, d) * q_head[d];
                     }
                     scores[i] = dot * scale;
                 }
@@ -216,7 +217,7 @@ impl Attention {
                 for i in 0..seq_len {
                     let w = scores[i];
                     for d in 0..head_dim {
-                        context[d] += w * state.v_cache[[self.layer_idx, kv_head, i, d]];
+                        context[d] += w * state.v_cache.get(self.layer_idx, kv_head, i, d);
                     }
                 }
 

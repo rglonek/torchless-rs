@@ -1,10 +1,11 @@
 use crate::kernels;
 use crate::loader::{Config, Parameters, WeightMatrix};
 use anyhow::Result;
-use ndarray::{Array1, Array2, Array4};
+use ndarray::{Array1, Array2};
 
 pub mod architecture;
 pub mod batching;
+pub mod kv_cache;
 pub mod models;
 pub mod modules;
 #[cfg(feature = "parallel")]
@@ -82,6 +83,8 @@ pub use parallel::{
     PipelineParallelMistral, TensorParallelMistral,
 };
 
+pub use kv_cache::{KVCache, KVDtype};
+
 /// Default maximum sequence length if not specified.
 const DEFAULT_MAX_SEQ_LEN: usize = 2048;
 
@@ -110,8 +113,8 @@ pub struct InferenceState {
     pub v_state: Array2<f32>, // [n_kv_heads, head_dim]
 
     // KV cache
-    pub k_cache: Array4<f32>, // [n_layers, n_kv_heads, max_seq_len, head_dim]
-    pub v_cache: Array4<f32>, // [n_layers, n_kv_heads, max_seq_len, head_dim]
+    pub k_cache: KVCache, // [n_layers, n_kv_heads, max_seq_len, head_dim]
+    pub v_cache: KVCache, // [n_layers, n_kv_heads, max_seq_len, head_dim]
 
     // Attention outputs
     pub scores: Array2<f32>,  // [n_heads, max_seq_len]
@@ -132,11 +135,11 @@ pub struct InferenceState {
 impl InferenceState {
     /// Create a new inference state with the default max sequence length.
     pub fn new(config: Config) -> Self {
-        Self::with_seq_len(config, DEFAULT_MAX_SEQ_LEN)
+        Self::with_seq_len(config, DEFAULT_MAX_SEQ_LEN, KVDtype::F16)
     }
 
     /// Create a new inference state with a custom max sequence length.
-    pub fn with_seq_len(config: Config, max_seq_len: usize) -> Self {
+    pub fn with_seq_len(config: Config, max_seq_len: usize, kv_dtype: KVDtype) -> Self {
         let head_dim = config.hidden_size / config.n_heads;
 
         // Initialize RoPE inverse frequencies
@@ -161,8 +164,20 @@ impl InferenceState {
             k_state: Array2::zeros((config.n_kv_heads, head_dim)),
             v_state: Array2::zeros((config.n_kv_heads, head_dim)),
 
-            k_cache: Array4::zeros((config.n_layers, config.n_kv_heads, max_seq_len, head_dim)),
-            v_cache: Array4::zeros((config.n_layers, config.n_kv_heads, max_seq_len, head_dim)),
+            k_cache: KVCache::new(
+                config.n_layers,
+                config.n_kv_heads,
+                max_seq_len,
+                head_dim,
+                kv_dtype,
+            ),
+            v_cache: KVCache::new(
+                config.n_layers,
+                config.n_kv_heads,
+                max_seq_len,
+                head_dim,
+                kv_dtype,
+            ),
 
             scores: Array2::zeros((config.n_heads, max_seq_len)),
             context: Array2::zeros((config.n_heads, head_dim)),
@@ -184,62 +199,35 @@ impl InferenceState {
 
     /// Push current K and V states to the cache at position `pos` for layer `layer_idx`
     pub fn push_kv(&mut self, layer_idx: usize) {
+        let head_dim = self.k_state.shape()[1];
         for h in 0..self.config.n_kv_heads {
-            // Copy k_state[h] to k_cache[layer_idx, h, pos, :]
-            for d in 0..self.k_state.shape()[1] {
-                self.k_cache[[layer_idx, h, self.pos, d]] = self.k_state[[h, d]];
-                self.v_cache[[layer_idx, h, self.pos, d]] = self.v_state[[h, d]];
-            }
+            let k_row: Vec<f32> = (0..head_dim).map(|d| self.k_state[[h, d]]).collect();
+            let v_row: Vec<f32> = (0..head_dim).map(|d| self.v_state[[h, d]]).collect();
+            self.k_cache.push_head(layer_idx, h, self.pos, &k_row);
+            self.v_cache.push_head(layer_idx, h, self.pos, &v_row);
         }
     }
 
-    /// Push current K and V states to cache using optimized unchecked access.
-    ///
-    /// # Safety
-    /// This uses unchecked array access for performance. The caller must ensure
-    /// that layer_idx, pos, and all head indices are within bounds.
+    /// Push current K and V states to cache using bulk head writes.
     pub fn push_kv_optimized(&mut self, layer_idx: usize) {
-        let n_kv_heads = self.config.n_kv_heads;
-        let head_dim = self.k_state.shape()[1];
-        let pos = self.pos;
-
-        // Get raw pointers for unchecked access
+        let head_dim = self.config.hidden_size / self.config.n_heads;
         let k_state_slice = self.k_state.as_slice().expect("k_state must be contiguous");
         let v_state_slice = self.v_state.as_slice().expect("v_state must be contiguous");
 
-        // Calculate strides for 4D cache access
-        // Shape: [n_layers, n_kv_heads, max_seq_len, head_dim]
-        let cache_shape = self.k_cache.shape();
-        let stride_layer = cache_shape[1] * cache_shape[2] * cache_shape[3];
-        let stride_head = cache_shape[2] * cache_shape[3];
-        let stride_pos = cache_shape[3];
-
-        let k_cache_slice = self
-            .k_cache
-            .as_slice_mut()
-            .expect("k_cache must be contiguous");
-        let v_cache_slice = self
-            .v_cache
-            .as_slice_mut()
-            .expect("v_cache must be contiguous");
-
-        unsafe {
-            let base_offset = layer_idx * stride_layer + pos * stride_pos;
-
-            for h in 0..n_kv_heads {
-                let cache_offset = base_offset + h * stride_head;
-                let state_offset = h * head_dim;
-
-                // Use pointer arithmetic for bounds-check-free copy
-                let k_dst = k_cache_slice.as_mut_ptr().add(cache_offset);
-                let v_dst = v_cache_slice.as_mut_ptr().add(cache_offset);
-                let k_src = k_state_slice.as_ptr().add(state_offset);
-                let v_src = v_state_slice.as_ptr().add(state_offset);
-
-                // Copy head_dim elements
-                std::ptr::copy_nonoverlapping(k_src, k_dst, head_dim);
-                std::ptr::copy_nonoverlapping(v_src, v_dst, head_dim);
-            }
+        for h in 0..self.config.n_kv_heads {
+            let offset = h * head_dim;
+            self.k_cache.push_head(
+                layer_idx,
+                h,
+                self.pos,
+                &k_state_slice[offset..offset + head_dim],
+            );
+            self.v_cache.push_head(
+                layer_idx,
+                h,
+                self.pos,
+                &v_state_slice[offset..offset + head_dim],
+            );
         }
     }
 
@@ -307,7 +295,7 @@ impl ArenaInferenceState {
         let attention_scratch = crate::memory::AlignedBuffer::zeros(config.n_heads * max_seq_len);
 
         Self {
-            inner: InferenceState::with_seq_len(config, max_seq_len),
+            inner: InferenceState::with_seq_len(config, max_seq_len, KVDtype::F16),
             arena,
             mlp_scratch,
             attention_scratch,

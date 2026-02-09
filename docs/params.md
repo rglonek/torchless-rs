@@ -109,10 +109,10 @@ A common recipe for high-quality generation:
 
 Controls whether the model weights are loaded entirely into memory at startup (eager) or loaded on demand during inference (lazy).
 
-| Mode | RAM usage (7B FP32) | Speed | Best for |
-|------|---------------------|-------|----------|
-| Eager (default) | ~25 GB | ~1 tok/s | Machines with plenty of RAM; fastest inference |
-| Lazy (`--lazy`) | <2 GB | ~0.5 tok/s | Memory-constrained machines; exploring models |
+| Mode | RAM usage (7B) | Speed | Best for |
+|------|----------------|-------|----------|
+| Eager (default) | ~15 GB (FP16) / ~5 GB (Q4) | ~1 tok/s | Machines with plenty of RAM; fastest inference |
+| Lazy (`--lazy`) | <2 GB base + KV cache | ~0.5 tok/s | Memory-constrained machines; exploring models |
 
 **How it works:** In lazy mode, the model weights remain memory-mapped from disk. Each layer's tensors are loaded into working memory only when needed for the forward pass, then released. This dramatically reduces peak RAM usage at the cost of repeated I/O — roughly 2x slower on CPU.
 
@@ -120,6 +120,24 @@ Use `--lazy` when:
 - Your machine doesn't have enough RAM to hold the full model (e.g., running a 7B model on a 16 GB laptop).
 - You want to quickly test a model without waiting for a full load.
 - You're running multiple models and need to minimize per-model memory footprint.
+
+### `--kv-dtype <TYPE>` -- KV Cache Precision
+
+**Default:** `f16` (half precision).
+
+Controls the data type used for the attention key-value cache. FP16 halves KV cache memory compared to FP32 with negligible quality impact.
+
+| `--kv-dtype` | Bytes/element | Memory (Mistral 7B, 32K ctx) | Quality |
+|--------------|---------------|------------------------------|---------|
+| `f16` (default) | 2 | ~4 GB | Excellent -- negligible difference from f32 |
+| `f32` | 4 | ~8 GB | Baseline |
+
+The KV cache precision is independent of the model's weight format. A Q4_K_M model still benefits from FP16 KV cache.
+
+**When to use `--kv-dtype f32`:**
+- Debugging quality issues in very long sequences
+- Comparing against a reference implementation
+- Models that are particularly sensitive to KV precision (rare)
 
 ### `--speculative` -- Self-Speculative Decoding
 
@@ -222,6 +240,9 @@ In chat mode, `trim_to_fit` reserves `max_tokens` worth of space for generation.
 
 # Memory-constrained: small context window
 ./torchless --chat --max-seq-len 4096 model.bin
+
+# Full-precision KV cache (debugging / reference comparison)
+./torchless --kv-dtype f32 --chat model.bin
 
 # Lazy loading on a memory-constrained machine
 ./torchless --lazy --chat model.bin

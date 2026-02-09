@@ -148,11 +148,8 @@ fn test_attention_shape_preservation() {
     assert_eq!(state.hidden_state.len(), config.hidden_size);
 
     // Verify KV cache was updated (should have non-zero values after projection)
-    let has_nonzero = state
-        .k_cache
-        .slice(ndarray::s![0, 0, 0, ..])
-        .iter()
-        .any(|&v| v != 0.0);
+    let k_slice = state.k_cache.get_slice_f32(0, 0, state.pos + 1);
+    let has_nonzero = k_slice.iter().any(|&v| v != 0.0);
     assert!(
         has_nonzero,
         "KV cache should have non-zero values after forward pass"
@@ -190,9 +187,9 @@ fn test_kv_cache_push() {
     // Push to cache at layer 0, position 0
     state.push_kv(0);
 
-    // Verify values were copied
-    assert_eq!(state.k_cache[[0, 0, 0, 0]], 1.5);
-    assert_eq!(state.v_cache[[0, 0, 0, 0]], 2.5);
+    // Verify values were copied (use get() for KVCache abstraction)
+    assert_eq!(state.k_cache.get(0, 0, 0, 0), 1.5);
+    assert_eq!(state.v_cache.get(0, 0, 0, 0), 2.5);
 }
 
 // =============================================================================

@@ -13,7 +13,7 @@ use std::thread;
 
 use torchless::{
     display_thinking_token_to, generate_lazy_until_eos, generate_until_eos, init_backend,
-    BackendPreference, ChatTemplate, InferenceState, LazyMistral, Mistral, Parameters,
+    BackendPreference, ChatTemplate, InferenceState, KVDtype, LazyMistral, Mistral, Parameters,
     SamplingConfig, ThinkingState,
 };
 
@@ -54,6 +54,7 @@ pub(crate) fn run_socket_server(
     speculative: bool,
     show_thinking: bool,
     debug: bool,
+    kv_dtype: KVDtype,
 ) -> anyhow::Result<()> {
     // Initialize backend
     let backend = init_backend(backend_pref)?;
@@ -146,6 +147,7 @@ pub(crate) fn run_socket_server(
                     speculative,
                     show_thinking,
                     debug,
+                    kv_dtype,
                 );
 
                 match result {
@@ -213,6 +215,7 @@ pub(crate) fn run_socket_server(
                     speculative,
                     show_thinking,
                     debug,
+                    kv_dtype,
                 );
 
                 match result {
@@ -242,6 +245,7 @@ fn handle_connection_lazy(
     speculative: bool,
     show_thinking: bool,
     debug: bool,
+    kv_dtype: KVDtype,
 ) -> anyhow::Result<String> {
     let read_stream = stream.try_clone()?;
     let mut reader = BufReader::new(read_stream);
@@ -252,7 +256,7 @@ fn handle_connection_lazy(
     let user_save_root = save_root.join(&username);
 
     // Create per-user InferenceState
-    let state = InferenceState::with_seq_len(model_config.clone(), max_seq_len);
+    let state = InferenceState::with_seq_len(model_config.clone(), max_seq_len, kv_dtype);
 
     // Create per-user thinking state
     let thinking_state = ThinkingState::new(*thinking_ids, show_thinking);
@@ -343,6 +347,7 @@ fn handle_connection_eager(
     speculative: bool,
     show_thinking: bool,
     debug: bool,
+    kv_dtype: KVDtype,
 ) -> anyhow::Result<String> {
     let read_stream = stream.try_clone()?;
     let mut reader = BufReader::new(read_stream);
@@ -353,7 +358,7 @@ fn handle_connection_eager(
     let user_save_root = save_root.join(&username);
 
     // Create per-user InferenceState
-    let state = InferenceState::with_seq_len(model.config.clone(), max_seq_len);
+    let state = InferenceState::with_seq_len(model.config.clone(), max_seq_len, kv_dtype);
 
     // Create per-user thinking state
     let thinking_state = ThinkingState::new(*thinking_ids, show_thinking);

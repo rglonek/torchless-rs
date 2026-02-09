@@ -37,29 +37,29 @@ Memory required to store model weights at each quantization level (weights only,
 | LLaMA 3 / 3.1 8B | ~32 GB | ~16 GB | ~8.5 GB | ~4.5 GB |
 | Gemma 7B | ~33 GB | ~16.4 GB | ~8.7 GB | ~4.6 GB |
 
-### KV Cache Memory (FP32)
+### KV Cache Memory
 
-The KV cache stores attention keys and values for all layers. It is always allocated in FP32 and scales linearly with sequence length. Using `--max-seq-len` controls this.
+The KV cache stores attention keys and values for all layers. By default it uses FP16 (`--kv-dtype f16`), which halves memory compared to FP32. Use `--kv-dtype f32` for full precision.
 
-| Model | Context | KV Heads | KV Cache |
-|-------|---------|----------|----------|
-| Gemma 2B | 8,192 | 1 | 0.3 GB |
-| LLaMA 3 / 3.1 8B | 8,192 | 8 | 2.0 GB |
-| Phi-3 Mini | 4,096 | 32 | 3.0 GB |
-| Qwen 2 7B | 32,768 | 4 | 3.5 GB |
-| LLaMA 2 7B | 4,096 | 32 | 4.0 GB |
-| Gemma 7B | 8,192 | 16 | 5.3 GB |
-| Mistral 7B | 32,768 | 8 | 8.0 GB |
+| Model | Context | KV Heads | KV Cache (FP16) | KV Cache (FP32) |
+|-------|---------|----------|-----------------|-----------------|
+| Gemma 2B | 8,192 | 1 | 0.15 GB | 0.3 GB |
+| LLaMA 3 / 3.1 8B | 8,192 | 8 | 1.0 GB | 2.0 GB |
+| Phi-3 Mini | 4,096 | 32 | 1.5 GB | 3.0 GB |
+| Qwen 2 7B | 32,768 | 4 | 1.75 GB | 3.5 GB |
+| LLaMA 2 7B | 4,096 | 32 | 2.0 GB | 4.0 GB |
+| Gemma 7B | 8,192 | 16 | 2.65 GB | 5.3 GB |
+| Mistral 7B | 32,768 | 8 | 4.0 GB | 8.0 GB |
 
 > **Note:** Models with GQA (fewer KV heads) use dramatically less KV cache memory. Mistral 7B and LLaMA 3 use 8 KV heads; Qwen 2 uses 4. LLaMA 2 and Phi-3 use full multi-head attention (32 KV heads) which costs more.
 
 For large-context models at full context:
 
-| Model | Context | KV Cache (FP32) |
-|-------|---------|-----------------|
-| Qwen 2.5 7B | 131,072 | 14 GB |
-| LLaMA 3.1 8B | 131,072 | 32 GB |
-| Phi-3 Mini Long | 128,000 | 94 GB |
+| Model | Context | KV Cache (FP16) | KV Cache (FP32) |
+|-------|---------|-----------------|-----------------|
+| Qwen 2.5 7B | 131,072 | 7 GB | 14 GB |
+| LLaMA 3.1 8B | 131,072 | 16 GB | 32 GB |
+| Phi-3 Mini Long | 128,000 | 47 GB | 94 GB |
 
 > **Tip:** Use `--max-seq-len 4096` to limit KV cache allocation when you don't need the full trained context. This saves significant memory, especially for large-context models.
 
@@ -73,40 +73,42 @@ These tables show the **total memory** required (model weights + KV cache + ~0.5
 
 This is with `--max-seq-len 2048` or the model default if smaller.
 
-| Model | Eager CPU (FP32) | Lazy CPU | GPU FP16 | GPU Q4_K_M |
-|-------|-------------------|----------|----------|------------|
-| Gemma 2B | ~11 GB | ~2 GB | ~6 GB | ~2 GB |
-| Phi-3 Mini | ~17 GB | ~3 GB | ~10 GB | ~4 GB |
-| LLaMA 2 7B | ~30 GB | ~4 GB | ~16 GB | ~6 GB |
-| Mistral 7B | ~30 GB | ~2 GB | ~16 GB | ~5 GB |
-| Qwen 2 / 2.5 7B | ~31 GB | ~2 GB | ~16 GB | ~5 GB |
-| LLaMA 3 / 3.1 8B | ~33 GB | ~2 GB | ~17 GB | ~5 GB |
-| Gemma 7B | ~35 GB | ~3 GB | ~18 GB | ~6 GB |
+| Model | Eager FP16 | Eager Q4_K_M | Lazy | GPU FP16 | GPU Q4_K_M |
+|-------|------------|--------------|------|----------|------------|
+| Gemma 2B | ~5.5 GB | ~2 GB | ~2 GB | ~5.5 GB | ~2 GB |
+| Phi-3 Mini | ~8.5 GB | ~3 GB | ~2.5 GB | ~8.5 GB | ~3 GB |
+| LLaMA 2 7B | ~14 GB | ~5 GB | ~3 GB | ~14 GB | ~5 GB |
+| Mistral 7B | ~15 GB | ~5 GB | ~2 GB | ~15 GB | ~5 GB |
+| Qwen 2 / 2.5 7B | ~16 GB | ~5 GB | ~2 GB | ~16 GB | ~5 GB |
+| LLaMA 3 / 3.1 8B | ~17 GB | ~5.5 GB | ~2 GB | ~17 GB | ~5.5 GB |
+| Gemma 7B | ~17 GB | ~5.5 GB | ~2 GB | ~17 GB | ~5.5 GB |
 
 ### At Full Trained Context
 
 Using the model's full `max_position_embeddings` context window.
 
-| Model | Context | Eager CPU (FP32) | Lazy CPU | GPU FP16 | GPU Q4_K_M |
-|-------|---------|-------------------|----------|----------|------------|
-| Gemma 2B | 8,192 | ~11 GB | ~2 GB | ~6 GB | ~2 GB |
-| Phi-3 Mini | 4,096 | ~19 GB | ~5 GB | ~11 GB | ~6 GB |
-| LLaMA 2 7B | 4,096 | ~32 GB | ~6 GB | ~18 GB | ~9 GB |
-| LLaMA 3 8B | 8,192 | ~35 GB | ~4 GB | ~19 GB | ~7 GB |
-| Gemma 7B | 8,192 | ~39 GB | ~7 GB | ~22 GB | ~11 GB |
-| Mistral 7B | 32,768 | ~38 GB | ~10 GB | ~23 GB | ~13 GB |
-| Qwen 2 7B | 32,768 | ~34 GB | ~5 GB | ~19 GB | ~8 GB |
-| Qwen 2.5 7B | 131,072 | ~45 GB | ~16 GB | ~30 GB | ~19 GB |
-| LLaMA 3.1 8B | 131,072 | ~65 GB | ~34 GB | ~49 GB | ~37 GB |
+| Model | Context | Eager FP16 | Eager Q4_K_M | Lazy | GPU FP16 | GPU Q4_K_M |
+|-------|---------|------------|--------------|------|----------|------------|
+| Gemma 2B | 8,192 | ~6 GB | ~2 GB | ~2 GB | ~6 GB | ~2 GB |
+| Phi-3 Mini | 4,096 | ~10 GB | ~4 GB | ~3 GB | ~11 GB | ~4 GB |
+| LLaMA 2 7B | 4,096 | ~16 GB | ~6 GB | ~4 GB | ~18 GB | ~6 GB |
+| LLaMA 3 8B | 8,192 | ~19 GB | ~7 GB | ~3 GB | ~19 GB | ~7 GB |
+| Gemma 7B | 8,192 | ~21 GB | ~8 GB | ~5 GB | ~22 GB | ~8 GB |
+| Mistral 7B | 32,768 | ~19 GB | ~8.5 GB | ~6 GB | ~23 GB | ~9 GB |
+| Qwen 2 7B | 32,768 | ~19 GB | ~8 GB | ~4 GB | ~19 GB | ~8 GB |
+| Qwen 2.5 7B | 131,072 | ~30 GB | ~14 GB | ~9 GB | ~30 GB | ~14 GB |
+| LLaMA 3.1 8B | 131,072 | ~49 GB | ~22 GB | ~18 GB | ~49 GB | ~22 GB |
 
 ### Run Mode Descriptions
 
 | Mode | Description | Best For |
 |------|-------------|----------|
-| **Eager CPU (FP32)** | All weights loaded into RAM as FP32. Fastest CPU inference. | High-memory systems, best throughput on CPU |
-| **Lazy CPU** | Weights stay memory-mapped on disk; loaded on-demand. ~1-1.5 GB base overhead. | Memory-constrained systems, laptops |
-| **GPU FP16** | Weights in VRAM as FP16. KV cache still FP32. | NVIDIA/AMD/Apple GPUs with ≥16 GB VRAM |
-| **GPU Q4_K_M** | Weights quantized to 4-bit in VRAM. KV cache still FP32. | GPUs with 4-8 GB VRAM |
+| **Eager CPU (native)** | Weights loaded in native format (FP16, Q4, etc.). Fastest CPU inference. | Systems with enough RAM for the model's native format |
+| **Lazy CPU** | Weights memory-mapped; loaded on-demand. ~1.5 GB base. | Memory-constrained systems |
+| **GPU FP16** | Weights in VRAM as FP16. | GPUs with sufficient VRAM |
+| **GPU Q4_K_M** | Weights quantized to 4-bit in VRAM. | GPUs with 4-8 GB VRAM |
+
+> **Note:** All modes use FP16 KV cache by default. Use `--kv-dtype f32` for FP32 KV cache.
 
 ---
 
@@ -122,7 +124,7 @@ These models require server-grade hardware. Torchless-rs supports them (they use
 | Qwen 2.5 72B | Qwen | ~72.7B | 131,072 | ~145 GB | ~41 GB |
 | LLaMA 2 70B | LLaMA | ~68.9B | 4,096 | ~138 GB | ~39 GB |
 
-> **KV cache for 70B-class models at 131K context:** ~160-250 GB (FP32). Use `--max-seq-len` to limit this or run with a shorter context.
+> **KV cache for 70B-class models at 131K context:** ~80-125 GB (FP16, default) or ~160-250 GB (FP32). Use `--max-seq-len` to limit this or run with a shorter context.
 
 ---
 
@@ -218,8 +220,8 @@ The **quantization level** (FP32, FP16, Q8_0, Q4_K_M, etc.) is baked into the mo
 
 **Eager vs. Lazy loading** — a loading strategy chosen at runtime. Both work on the same model file:
 
-- **Eager** (`Mistral::load()`) reads all weights into RAM as f32 arrays upfront. This gives the fastest CPU inference but uses the most memory.
-- **Lazy** (`LazyMistral::load()`) memory-maps the file and reads weights on-demand during each forward pass. This uses far less memory but is slower.
+- **Eager** (`Mistral::load()`) loads all weights into RAM in their **native format** (FP16, Q4, etc.). No dequantization to FP32 — an FP16 model stays FP16, a Q4_K_M model stays quantized. This gives the fastest CPU inference and uses memory proportional to the model's native format.
+- **Lazy** (`LazyMistral::load()`) memory-maps the file and reads weights on-demand during each forward pass. This uses far less memory (~1.5 GB base) but is slower.
 
 **CPU vs. GPU** — chosen at runtime via `--backend`:
 
@@ -232,20 +234,18 @@ The **quantization level** (FP32, FP16, Q8_0, Q4_K_M, etc.) is baked into the mo
 --backend auto      # Auto-select best available
 ```
 
+**KV cache precision** — controlled via `--kv-dtype` (default: `f16`). FP16 halves KV cache memory with negligible quality impact.
+
 ### How They Interact
 
 | You download... | You run with... | Result |
 |-----------------|-----------------|--------|
-| FP32 model | `--backend cpu` (eager) | ~29 GB RAM for a 7B model |
-| FP32 model | `--backend cpu` (lazy) | ~2 GB RAM for a 7B model |
+| FP16 model | eager | ~15 GB weights + FP16 KV cache |
+| Q4_K_M GGUF | eager | ~4 GB weights + FP16 KV cache |
+| Q4_K_M GGUF | lazy | ~1.5 GB base + FP16 KV cache |
 | FP16 model | `--backend cuda` | ~14.5 GB VRAM |
-| Q4_K_M GGUF | `--backend cuda` | ~4 GB VRAM |
-| Q4_K_M GGUF | `--backend cpu` (lazy) | ~2 GB RAM |
-| Q4_K_M GGUF | `--backend cpu` (eager) | **~29 GB RAM** (dequantized to f32!) |
 
-> **Important:** Eager mode always dequantizes weights to f32 on load (`params.get_tensor()` returns `Vec<f32>`). This means a Q4_K_M model loaded eagerly uses the **same** amount of RAM as an FP32 model. The on-disk quantization only saves memory in **lazy** and **GPU** modes, where weights are accessed in their native format.
-
-**In short:** download the quantization you want (smaller = less disk space and less VRAM), then pick eager/lazy and CPU/GPU at runtime. The biggest memory savings come from combining a **Q4_K_M model** with **lazy** or **GPU** mode.
+**In short:** download the quantization you want (smaller = less disk space and less VRAM), then pick eager/lazy and CPU/GPU at runtime. All modes use FP16 KV cache by default.
 
 ---
 
@@ -275,10 +275,10 @@ Plus embedding table (`vocab_size × hidden_size`) and LM head (`vocab_size × h
 ### KV Cache
 
 ```
-kv_cache_bytes = n_layers × n_kv_heads × head_dim × max_seq_len × 2 × 4
+kv_cache_bytes = n_layers × n_kv_heads × head_dim × max_seq_len × 2 × bytes_per_kv_element
 ```
 
-The `× 2` is for K and V caches; `× 4` is because the cache is always FP32.
+The `× 2` is for K and V caches. `bytes_per_kv_element` is 2 (FP16, default with `--kv-dtype f16`) or 4 (FP32 with `--kv-dtype f32`).
 
 ### Lazy Mode Savings
 
@@ -287,6 +287,7 @@ In lazy mode (`LazyMistral`, `LazyLLaMA`, etc.), model weights are memory-mapped
 ### Reducing Memory Usage
 
 - **`--max-seq-len N`** — Limit the context window. The KV cache is allocated upfront for the full sequence length, so setting this lower saves memory proportionally.
+- **`--kv-dtype f16`** (default) — FP16 KV cache halves memory compared to FP32 with negligible quality impact.
 - **Quantized models (GGUF Q4_K_M)** — 4-bit models use ~7× less memory for weights than FP32.
 - **Lazy loading** — Use `LazyMistral` / `LazyLLaMA` etc. via the library API, or the engine will auto-select lazy mode when memory is constrained.
 
@@ -296,11 +297,11 @@ In lazy mode (`LazyMistral`, `LazyLLaMA`, etc.), model weights are memory-mapped
 
 | Use Case | Recommended Model | Why |
 |----------|-------------------|-----|
-| **Minimal hardware** (8 GB RAM) | Gemma 2B (Q4) | Fits in ~2 GB total |
-| **Laptop** (16 GB RAM) | Mistral 7B (Q4, lazy, 4K ctx) | ~5 GB total, good quality |
-| **Desktop** (32 GB RAM) | LLaMA 3 8B (Q8, lazy) or Mistral 7B (eager) | Best quality at 7-8B scale |
-| **GPU** (8 GB VRAM) | Mistral 7B (Q4) | Fits in ~5 GB with 2K context |
+| **Minimal hardware** (8 GB RAM) | Gemma 2B (Q4, eager) | Fits in ~2 GB total |
+| **Laptop** (16 GB RAM) | Mistral 7B (Q4, eager) | ~9 GB total with 32K context |
+| **Desktop** (32 GB RAM) | Mistral 7B (FP16, eager, full 32K) | ~19 GB, best quality + full context |
+| **GPU** (8 GB VRAM) | Mistral 7B (Q4) | ~9 GB with 32K context |
 | **GPU** (16 GB VRAM) | LLaMA 3 8B (FP16) | Full precision, fast inference |
-| **GPU** (24 GB VRAM) | Mistral 7B (FP16, full 32K ctx) | Full context window |
-| **Large context** (budget) | Qwen 2.5 7B (Q4, lazy) | 128K context, only 4 KV heads |
+| **GPU** (24 GB VRAM) | Mistral 7B (FP16, full 32K ctx) | ~19 GB, full context window |
+| **Large context** (budget) | Qwen 2.5 7B (Q4, eager) | ~12 GB with 128K context |
 | **Large context** (quality) | Qwen 2.5 14B (Q4) | Best quality-to-context ratio |

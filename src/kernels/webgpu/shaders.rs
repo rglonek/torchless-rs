@@ -32,7 +32,7 @@ struct RMSNormParams {
 @group(0) @binding(1) var<storage, read> weight: array<f32>;
 @group(0) @binding(2) var<uniform> params: RMSNormParams;
 
-var<workgroup> shared: array<f32, 256>;
+var<workgroup> wg_shared: array<f32, 256>;
 
 @compute @workgroup_size(256)
 fn rmsnorm_kernel(@builtin(local_invocation_index) tid: u32) {
@@ -48,20 +48,20 @@ fn rmsnorm_kernel(@builtin(local_invocation_index) tid: u32) {
         i += block_size;
     }
     
-    shared[tid] = local_sum;
+    wg_shared[tid] = local_sum;
     workgroupBarrier();
     
     // Parallel reduction for sum
     var stride: u32 = block_size / 2u;
     while (stride > 0u) {
         if (tid < stride) {
-            shared[tid] += shared[tid + stride];
+            wg_shared[tid] += wg_shared[tid + stride];
         }
         workgroupBarrier();
         stride = stride / 2u;
     }
     
-    let rms = sqrt(shared[0u] / f32(n) + params.eps);
+    let rms = sqrt(wg_shared[0u] / f32(n) + params.eps);
     let inv_rms = 1.0 / rms;
     workgroupBarrier();
     

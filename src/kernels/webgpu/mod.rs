@@ -314,7 +314,7 @@ impl WebGPUBackend {
             ],
         });
 
-        let workgroups = (n + 255) / 256;
+        let workgroups = n.div_ceil(256);
 
         let mut encoder = self
             .device
@@ -392,7 +392,7 @@ impl WebGPUBackend {
             ],
         });
 
-        let workgroups = (total + 255) / 256;
+        let workgroups = total.div_ceil(256);
 
         let mut encoder = self
             .device
@@ -468,7 +468,7 @@ impl WebGPUBackend {
             ],
         });
 
-        let workgroups = (seq_len + 255) / 256;
+        let workgroups = seq_len.div_ceil(256);
 
         let mut encoder = self
             .device
@@ -541,7 +541,7 @@ impl WebGPUBackend {
             ],
         });
 
-        let workgroups = (d + 255) / 256;
+        let workgroups = d.div_ceil(256);
 
         let mut encoder = self
             .device
@@ -614,7 +614,7 @@ impl WebGPUBackend {
             ],
         });
 
-        let workgroups = (rows + 255) / 256;
+        let workgroups = rows.div_ceil(256);
 
         let mut encoder = self
             .device

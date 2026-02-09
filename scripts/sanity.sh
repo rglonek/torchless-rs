@@ -15,7 +15,7 @@ fi
 
 # run cargo clippy
 echo "Running cargo clippy"
-cargo clippy -- --deny warnings
+cargo clippy --features webgpu -- --deny warnings
 
 # run cargo fmt
 echo "Running cargo fmt"
@@ -23,4 +23,4 @@ cargo fmt --all -- --check
 
 # run cargo test
 echo "Running cargo test"
-cargo test --verbose
+cargo test --verbose --features webgpu

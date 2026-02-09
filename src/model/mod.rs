@@ -1,5 +1,5 @@
 use crate::kernels;
-use crate::loader::{Config, Parameters};
+use crate::loader::{Config, Parameters, WeightMatrix};
 use anyhow::Result;
 use ndarray::{Array1, Array2, Array4};
 
@@ -358,7 +358,7 @@ pub struct Mistral {
     pub embedding: Embedding,
     pub layers: Vec<Layer>,
     pub norm: RMSNorm,
-    pub lm_head: Array2<f32>,
+    pub lm_head: WeightMatrix,
     pub tokenizer: crate::tokenizer::Tokenizer,
 }
 
@@ -369,14 +369,7 @@ impl Mistral {
 
         // Load embedding table
         eprintln!("Loading embedding table...");
-        let embed_data = params.get_tensor("model.embed_tokens.weight")?;
-        let embed_shape = params
-            .get_tensor_shape("model.embed_tokens.weight")
-            .unwrap();
-        let embedding = Embedding::new(Array2::from_shape_vec(
-            (embed_shape[0], embed_shape[1]),
-            embed_data,
-        )?);
+        let embedding = Embedding::new(params.get_weight_matrix("model.embed_tokens.weight")?);
 
         // Load final norm
         eprintln!("Loading final norm...");
@@ -385,9 +378,7 @@ impl Mistral {
 
         // Load LM head
         eprintln!("Loading LM head...");
-        let lm_head_data = params.get_tensor("lm_head.weight")?;
-        let lm_head_shape = params.get_tensor_shape("lm_head.weight").unwrap();
-        let lm_head = Array2::from_shape_vec((lm_head_shape[0], lm_head_shape[1]), lm_head_data)?;
+        let lm_head = params.get_weight_matrix("lm_head.weight")?;
 
         // Load layers
         eprintln!("Loading {} layers...", config.n_layers);
@@ -444,10 +435,8 @@ impl Mistral {
         ))
     }
 
-    fn load_weight(params: &Parameters, name: &str) -> Result<Array2<f32>> {
-        let data = params.get_tensor(name)?;
-        let shape = params.get_tensor_shape(name).unwrap();
-        Ok(Array2::from_shape_vec((shape[0], shape[1]), data)?)
+    fn load_weight(params: &Parameters, name: &str) -> Result<WeightMatrix> {
+        params.get_weight_matrix(name)
     }
 
     pub fn forward(&self, state: &mut InferenceState, token: u32, debug: bool) {
@@ -463,9 +452,10 @@ impl Mistral {
         self.norm.forward(state);
 
         // LM head projection to get logits
-        state
-            .logits
-            .assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 
     /// Optimized forward pass: uses parallel attention and matmul when available
@@ -481,11 +471,11 @@ impl Mistral {
         // Final norm (uses SIMD when that feature is enabled)
         self.norm.fast_forward(state);
 
-        // LM head projection to get logits (parallel when feature enabled)
-        state.logits.assign(&kernels::fast_matmul_vec(
-            &self.lm_head,
-            &state.hidden_state,
-        ));
+        // LM head projection to get logits
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 }
 

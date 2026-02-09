@@ -1,6 +1,7 @@
 use super::super::InferenceState;
 use crate::kernels;
-use ndarray::{s, Array2};
+use crate::loader::WeightMatrix;
+use ndarray::s;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -8,19 +9,19 @@ use rayon::prelude::*;
 /// Multi-head attention with grouped-query attention (GQA)
 pub struct Attention {
     pub layer_idx: usize,
-    pub q_proj: Array2<f32>, // [n_heads * head_dim, hidden_size]
-    pub k_proj: Array2<f32>, // [n_kv_heads * head_dim, hidden_size]
-    pub v_proj: Array2<f32>, // [n_kv_heads * head_dim, hidden_size]
-    pub o_proj: Array2<f32>, // [hidden_size, n_heads * head_dim]
+    pub q_proj: WeightMatrix, // [n_heads * head_dim, hidden_size]
+    pub k_proj: WeightMatrix, // [n_kv_heads * head_dim, hidden_size]
+    pub v_proj: WeightMatrix, // [n_kv_heads * head_dim, hidden_size]
+    pub o_proj: WeightMatrix, // [hidden_size, n_heads * head_dim]
 }
 
 impl Attention {
     pub fn new(
         layer_idx: usize,
-        q_proj: Array2<f32>,
-        k_proj: Array2<f32>,
-        v_proj: Array2<f32>,
-        o_proj: Array2<f32>,
+        q_proj: WeightMatrix,
+        k_proj: WeightMatrix,
+        v_proj: WeightMatrix,
+        o_proj: WeightMatrix,
     ) -> Self {
         Self {
             layer_idx,
@@ -42,9 +43,13 @@ impl Attention {
         let head_dim = state.config.hidden_size / state.config.n_heads;
 
         // Project to Q, K, V using pre-allocated flat buffers (no allocation)
-        kernels::matmul_vec_into(&self.q_proj, &state.hidden_state, &mut state.q_flat);
-        kernels::matmul_vec_into(&self.k_proj, &state.hidden_state, &mut state.k_flat);
-        kernels::matmul_vec_into(&self.v_proj, &state.hidden_state, &mut state.v_flat);
+        let hidden_slice = state.hidden_state.as_slice().unwrap();
+        self.q_proj
+            .matmul_vec_into(hidden_slice, state.q_flat.as_slice_mut().unwrap());
+        self.k_proj
+            .matmul_vec_into(hidden_slice, state.k_flat.as_slice_mut().unwrap());
+        self.v_proj
+            .matmul_vec_into(hidden_slice, state.v_flat.as_slice_mut().unwrap());
 
         // Copy flat buffers into shaped state arrays
         // (This avoids the allocation of into_shape_with_order which takes ownership)
@@ -122,7 +127,10 @@ impl Attention {
         }
 
         // Apply output projection
-        kernels::matmul_vec_into(&self.o_proj, &state.context_flat, &mut state.hidden_state);
+        self.o_proj.matmul_vec_into(
+            state.context_flat.as_slice().unwrap(),
+            state.hidden_state.as_slice_mut().unwrap(),
+        );
     }
 
     /// Parallel forward pass: multi-head attention with GQA
@@ -138,10 +146,14 @@ impl Attention {
         let scale = 1.0 / (head_dim as f32).sqrt();
         let seq_len = state.pos + 1;
 
-        // Project to Q, K, V using parallel matmul
-        kernels::fast_matmul_vec_into(&self.q_proj, &state.hidden_state, &mut state.q_flat);
-        kernels::fast_matmul_vec_into(&self.k_proj, &state.hidden_state, &mut state.k_flat);
-        kernels::fast_matmul_vec_into(&self.v_proj, &state.hidden_state, &mut state.v_flat);
+        // Project to Q, K, V
+        let hidden_slice = state.hidden_state.as_slice().unwrap();
+        self.q_proj
+            .matmul_vec_into(hidden_slice, state.q_flat.as_slice_mut().unwrap());
+        self.k_proj
+            .matmul_vec_into(hidden_slice, state.k_flat.as_slice_mut().unwrap());
+        self.v_proj
+            .matmul_vec_into(hidden_slice, state.v_flat.as_slice_mut().unwrap());
 
         // Copy flat buffers into shaped state arrays
         for h in 0..n_heads {
@@ -226,8 +238,11 @@ impl Attention {
             }
         }
 
-        // Apply output projection with parallel matmul
-        kernels::fast_matmul_vec_into(&self.o_proj, &state.context_flat, &mut state.hidden_state);
+        // Apply output projection
+        self.o_proj.matmul_vec_into(
+            state.context_flat.as_slice().unwrap(),
+            state.hidden_state.as_slice_mut().unwrap(),
+        );
     }
 
     /// Auto-selecting forward: uses parallel when available

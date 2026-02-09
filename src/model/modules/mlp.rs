@@ -1,16 +1,16 @@
 use super::super::InferenceState;
 use crate::kernels;
-use ndarray::Array2;
+use crate::loader::WeightMatrix;
 
 /// MLP (feedforward) layer with SwiGLU activation
 pub struct MLP {
-    pub gate_proj: Array2<f32>, // [intermediate_size, hidden_size]
-    pub up_proj: Array2<f32>,   // [intermediate_size, hidden_size]
-    pub down_proj: Array2<f32>, // [hidden_size, intermediate_size]
+    pub gate_proj: WeightMatrix, // [intermediate_size, hidden_size]
+    pub up_proj: WeightMatrix,   // [intermediate_size, hidden_size]
+    pub down_proj: WeightMatrix, // [hidden_size, intermediate_size]
 }
 
 impl MLP {
-    pub fn new(gate_proj: Array2<f32>, up_proj: Array2<f32>, down_proj: Array2<f32>) -> Self {
+    pub fn new(gate_proj: WeightMatrix, up_proj: WeightMatrix, down_proj: WeightMatrix) -> Self {
         Self {
             gate_proj,
             up_proj,
@@ -22,14 +22,13 @@ impl MLP {
     /// out = down_proj @ (silu(gate_proj @ x) * (up_proj @ x))
     pub fn forward(&self, state: &mut InferenceState) {
         // gate = gate_proj @ hidden_state
-        state
-            .mlp_gate
-            .assign(&kernels::matmul_vec(&self.gate_proj, &state.hidden_state));
+        let hidden_slice = state.hidden_state.as_slice().unwrap();
+        let gate_slice = state.mlp_gate.as_slice_mut().unwrap();
+        self.gate_proj.matmul_vec_into(hidden_slice, gate_slice);
 
         // up = up_proj @ hidden_state
-        state
-            .mlp_up
-            .assign(&kernels::matmul_vec(&self.up_proj, &state.hidden_state));
+        let up_slice = state.mlp_up.as_slice_mut().unwrap();
+        self.up_proj.matmul_vec_into(hidden_slice, up_slice);
 
         // Apply SiLU to gate
         let gate_activated = kernels::silu(&state.mlp_gate);
@@ -40,24 +39,21 @@ impl MLP {
         }
 
         // down_proj @ (gate * up)
-        state
-            .hidden_state
-            .assign(&kernels::matmul_vec(&self.down_proj, &state.mlp_gate));
+        let gate_slice = state.mlp_gate.as_slice().unwrap();
+        let hidden_out_slice = state.hidden_state.as_slice_mut().unwrap();
+        self.down_proj.matmul_vec_into(gate_slice, hidden_out_slice);
     }
 
     /// Optimized forward pass: uses parallel matmul when available
     pub fn fast_forward(&self, state: &mut InferenceState) {
-        // gate = gate_proj @ hidden_state (parallel when feature enabled)
-        state.mlp_gate.assign(&kernels::fast_matmul_vec(
-            &self.gate_proj,
-            &state.hidden_state,
-        ));
+        // gate = gate_proj @ hidden_state
+        let hidden_slice = state.hidden_state.as_slice().unwrap();
+        let gate_slice = state.mlp_gate.as_slice_mut().unwrap();
+        self.gate_proj.matmul_vec_into(hidden_slice, gate_slice);
 
-        // up = up_proj @ hidden_state (parallel when feature enabled)
-        state.mlp_up.assign(&kernels::fast_matmul_vec(
-            &self.up_proj,
-            &state.hidden_state,
-        ));
+        // up = up_proj @ hidden_state
+        let up_slice = state.mlp_up.as_slice_mut().unwrap();
+        self.up_proj.matmul_vec_into(hidden_slice, up_slice);
 
         // Apply SiLU to gate (uses SIMD when that feature is enabled)
         let gate_activated = kernels::fast_silu(&state.mlp_gate);
@@ -67,9 +63,9 @@ impl MLP {
             state.mlp_gate[i] = gate_activated[i] * state.mlp_up[i];
         }
 
-        // down_proj @ (gate * up) (parallel when feature enabled)
-        state
-            .hidden_state
-            .assign(&kernels::fast_matmul_vec(&self.down_proj, &state.mlp_gate));
+        // down_proj @ (gate * up)
+        let gate_slice = state.mlp_gate.as_slice().unwrap();
+        let hidden_out_slice = state.hidden_state.as_slice_mut().unwrap();
+        self.down_proj.matmul_vec_into(gate_slice, hidden_out_slice);
     }
 }

@@ -29,7 +29,7 @@
 //! ```
 
 use crate::kernels;
-use crate::loader::{Config, Parameters};
+use crate::loader::{Config, Parameters, WeightMatrix};
 use crate::model::architecture::{ArchitectureConfig, Model, ModelArchitecture, TensorNamePattern};
 use crate::model::modules::RMSNorm;
 use crate::model::{Embedding, InferenceState};
@@ -77,10 +77,10 @@ fn clamped_swiglu(fused: &[f32], limit: f32) -> Vec<f32> {
 /// irrelevant attention mass.
 pub struct GptOssAttention {
     pub layer_idx: usize,
-    pub q_proj: Array2<f32>,
-    pub k_proj: Array2<f32>,
-    pub v_proj: Array2<f32>,
-    pub o_proj: Array2<f32>,
+    pub q_proj: WeightMatrix,
+    pub k_proj: WeightMatrix,
+    pub v_proj: WeightMatrix,
+    pub o_proj: WeightMatrix,
     pub q_bias: Array1<f32>,
     pub k_bias: Array1<f32>,
     pub v_bias: Array1<f32>,
@@ -97,9 +97,18 @@ impl GptOssAttention {
         let head_dim = state.config.hidden_size / state.config.n_heads;
 
         // Project to Q, K, V with bias
-        kernels::matmul_vec_into(&self.q_proj, &state.hidden_state, &mut state.q_flat);
-        kernels::matmul_vec_into(&self.k_proj, &state.hidden_state, &mut state.k_flat);
-        kernels::matmul_vec_into(&self.v_proj, &state.hidden_state, &mut state.v_flat);
+        self.q_proj.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.q_flat.as_slice_mut().unwrap(),
+        );
+        self.k_proj.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.k_flat.as_slice_mut().unwrap(),
+        );
+        self.v_proj.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.v_flat.as_slice_mut().unwrap(),
+        );
 
         // Add biases
         for i in 0..state.q_flat.len() {
@@ -210,7 +219,10 @@ impl GptOssAttention {
         }
 
         // Output projection with bias
-        kernels::matmul_vec_into(&self.o_proj, &state.context_flat, &mut state.hidden_state);
+        self.o_proj.matmul_vec_into(
+            state.context_flat.as_slice().unwrap(),
+            state.hidden_state.as_slice_mut().unwrap(),
+        );
         for i in 0..state.hidden_state.len() {
             state.hidden_state[i] += self.o_bias[i];
         }
@@ -229,8 +241,8 @@ impl GptOssAttention {
 
 /// Router for GPT-OSS MoE with bias term.
 pub struct GptOssMoERouter {
-    pub gate_weight: Array2<f32>, // [n_experts, hidden_size]
-    pub gate_bias: Array1<f32>,   // [n_experts]
+    pub gate_weight: WeightMatrix, // [n_experts, hidden_size]
+    pub gate_bias: Array1<f32>,    // [n_experts]
     pub n_experts: usize,
     pub top_k: usize,
 }
@@ -238,7 +250,10 @@ pub struct GptOssMoERouter {
 impl GptOssMoERouter {
     /// Compute top-k expert routing with bias.
     pub fn route(&self, state: &InferenceState) -> (Vec<usize>, Vec<f32>) {
-        let mut router_logits = kernels::matmul_vec(&self.gate_weight, &state.hidden_state);
+        let logits_vec = self
+            .gate_weight
+            .matmul_vec(state.hidden_state.as_slice().unwrap());
+        let mut router_logits = Array1::from_vec(logits_vec);
         // Add bias
         for i in 0..router_logits.len() {
             router_logits[i] += self.gate_bias[i];
@@ -271,9 +286,9 @@ impl GptOssMoERouter {
 /// down_proj: [hidden_size, intermediate_size]
 /// Both have bias terms.
 pub struct GptOssExpert {
-    pub gate_up_proj: Array2<f32>,
+    pub gate_up_proj: WeightMatrix,
     pub gate_up_bias: Array1<f32>,
-    pub down_proj: Array2<f32>,
+    pub down_proj: WeightMatrix,
     pub down_bias: Array1<f32>,
 }
 
@@ -298,8 +313,7 @@ impl GptOssMoE {
             let expert = &self.experts[expert_idx];
 
             // gate_up = gate_up_proj @ input + gate_up_bias
-            let gate_up = kernels::matmul_vec(&expert.gate_up_proj, &input);
-            let mut gate_up_vec: Vec<f32> = gate_up.to_vec();
+            let mut gate_up_vec = expert.gate_up_proj.matmul_vec(input.as_slice().unwrap());
             for (i, val) in gate_up_vec.iter_mut().enumerate() {
                 *val += expert.gate_up_bias[i];
             }
@@ -308,8 +322,7 @@ impl GptOssMoE {
             let activated = clamped_swiglu(&gate_up_vec, self.swiglu_limit);
 
             // down = down_proj @ activated + down_bias
-            let activated_arr = Array1::from_vec(activated);
-            let down = kernels::matmul_vec(&expert.down_proj, &activated_arr);
+            let down = expert.down_proj.matmul_vec(&activated);
 
             for j in 0..hidden_size {
                 accumulated[j] += weight * (down[j] + expert.down_bias[j]);
@@ -402,7 +415,7 @@ pub struct GptOss {
     pub embedding: Embedding,
     pub layers: Vec<GptOssLayer>,
     pub norm: RMSNorm,
-    pub lm_head: Array2<f32>,
+    pub lm_head: WeightMatrix,
     pub tokenizer: crate::tokenizer::Tokenizer,
 }
 
@@ -422,12 +435,7 @@ impl GptOss {
 
         // Load embedding table
         eprintln!("Loading GPT-OSS embedding table...");
-        let embed_data = params.get_tensor(tensor_names.embed_tokens)?;
-        let embed_shape = params.get_tensor_shape(tensor_names.embed_tokens).unwrap();
-        let embedding = Embedding::new(Array2::from_shape_vec(
-            (embed_shape[0], embed_shape[1]),
-            embed_data,
-        )?);
+        let embedding = Embedding::new(params.get_weight_matrix(tensor_names.embed_tokens)?);
 
         // Load final norm
         eprintln!("Loading GPT-OSS final norm...");
@@ -436,9 +444,7 @@ impl GptOss {
 
         // Load LM head
         eprintln!("Loading GPT-OSS LM head...");
-        let lm_head_data = params.get_tensor(tensor_names.lm_head)?;
-        let lm_head_shape = params.get_tensor_shape(tensor_names.lm_head).unwrap();
-        let lm_head = Array2::from_shape_vec((lm_head_shape[0], lm_head_shape[1]), lm_head_data)?;
+        let lm_head = params.get_weight_matrix(tensor_names.lm_head)?;
 
         // Determine sliding window from config
         let sliding_window = if config.attention_sliding_window > 0 {
@@ -569,28 +575,25 @@ impl GptOss {
         };
 
         // Load batched expert weights and split into individual experts.
+        // Since we can't easily slice raw quantized bytes, use the F32 fallback:
+        // load via get_tensor (dequantized), slice per expert, wrap with WeightMatrix::from_f32.
         //
         // Tensor shapes (from HuggingFace safetensors):
-        // gate_up_proj: stored as MXFP4 blocks + scales, shape [n_experts, intermediate_size*2, hidden_size]
-        // down_proj: stored as MXFP4 blocks + scales, shape [n_experts, hidden_size, intermediate_size]
+        // gate_up_proj: [n_experts, intermediate_size*2, hidden_size]
+        // down_proj: [n_experts, hidden_size, intermediate_size]
         // gate_up_proj_bias: [n_experts, intermediate_size*2]
         // down_proj_bias: [n_experts, hidden_size]
-        //
-        // For the initial implementation, we load these as regular f32 tensors
-        // (the Parameters loader handles dequantization if needed).
 
         eprintln!(
             "    Loading {} experts for layer {}...",
             n_experts, layer_idx
         );
 
-        // Try to load batched expert tensors
         let gate_up_name = format!("{}.mlp.experts.gate_up_proj", prefix);
         let down_name = format!("{}.mlp.experts.down_proj", prefix);
         let gate_up_bias_name = format!("{}.mlp.experts.gate_up_proj_bias", prefix);
         let down_bias_name = format!("{}.mlp.experts.down_proj_bias", prefix);
 
-        // Load full batched tensors
         let gate_up_data = params.get_tensor(&gate_up_name)?;
         let gate_up_shape = params.get_tensor_shape(&gate_up_name).unwrap();
 
@@ -600,31 +603,27 @@ impl GptOss {
         let gate_up_bias_data = params.get_tensor(&gate_up_bias_name)?;
         let down_bias_data = params.get_tensor(&down_bias_name)?;
 
-        // gate_up_shape: [n_experts, intermediate_size*2, hidden_size]
-        let inter2 = gate_up_shape[1]; // intermediate_size * 2
+        let inter2 = gate_up_shape[1];
         let hidden = gate_up_shape[2];
-        // down_shape: [n_experts, hidden_size, intermediate_size]
         let down_hidden = down_shape[1];
         let inter = down_shape[2];
 
         let mut experts = Vec::with_capacity(n_experts);
         for e in 0..n_experts {
-            // Slice gate_up_proj for expert e: [inter2, hidden]
             let gu_offset = e * inter2 * hidden;
             let gu_slice = &gate_up_data[gu_offset..gu_offset + inter2 * hidden];
-            let gate_up_proj = Array2::from_shape_vec((inter2, hidden), gu_slice.to_vec())?;
+            let gate_up_arr = Array2::from_shape_vec((inter2, hidden), gu_slice.to_vec())?;
+            let gate_up_proj = WeightMatrix::from_f32(gate_up_arr);
 
-            // Slice gate_up_bias for expert e: [inter2]
             let gu_bias_offset = e * inter2;
             let gu_bias_slice = &gate_up_bias_data[gu_bias_offset..gu_bias_offset + inter2];
             let gate_up_bias = Array1::from_vec(gu_bias_slice.to_vec());
 
-            // Slice down_proj for expert e: [down_hidden, inter]
             let d_offset = e * down_hidden * inter;
             let d_slice = &down_data[d_offset..d_offset + down_hidden * inter];
-            let down_proj = Array2::from_shape_vec((down_hidden, inter), d_slice.to_vec())?;
+            let down_arr = Array2::from_shape_vec((down_hidden, inter), d_slice.to_vec())?;
+            let down_proj = WeightMatrix::from_f32(down_arr);
 
-            // Slice down_bias for expert e: [down_hidden]
             let d_bias_offset = e * down_hidden;
             let d_bias_slice = &down_bias_data[d_bias_offset..d_bias_offset + down_hidden];
             let down_bias = Array1::from_vec(d_bias_slice.to_vec());
@@ -644,10 +643,8 @@ impl GptOss {
         })
     }
 
-    fn load_weight(params: &Parameters, name: &str) -> Result<Array2<f32>> {
-        let data = params.get_tensor(name)?;
-        let shape = params.get_tensor_shape(name).unwrap();
-        Ok(Array2::from_shape_vec((shape[0], shape[1]), data)?)
+    fn load_weight(params: &Parameters, name: &str) -> Result<WeightMatrix> {
+        params.get_weight_matrix(name)
     }
 
     fn load_bias(params: &Parameters, name: &str) -> Result<Array1<f32>> {
@@ -665,9 +662,10 @@ impl GptOss {
 
         self.norm.forward(state);
 
-        state
-            .logits
-            .assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 
     /// Optimized forward pass
@@ -680,10 +678,10 @@ impl GptOss {
 
         self.norm.fast_forward(state);
 
-        state.logits.assign(&kernels::fast_matmul_vec(
-            &self.lm_head,
-            &state.hidden_state,
-        ));
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 }
 

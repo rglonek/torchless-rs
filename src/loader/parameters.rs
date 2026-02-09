@@ -1,4 +1,5 @@
 use super::quantization::{Q4KMBlock, Q4KSBlock, Q4_0Block, Q8_0Block, QK4_0, QK8_0, QK_K};
+use super::weight_matrix::WeightMatrix;
 use super::{Config, Header, TensorInfo};
 use crate::tokenizer::Tokenizer;
 use anyhow::{Context, Result};
@@ -1097,6 +1098,134 @@ impl Parameters {
                 Ok(TensorView {
                     data,
                     shape: info.shape.clone(),
+                    dtype: TensorDtype::Q4_K_S,
+                    scales: None,
+                    group_size: QK_K,
+                })
+            }
+            _ => anyhow::bail!("Unsupported dtype: {}", info.dtype),
+        }
+    }
+
+    /// Get a weight matrix in its native format without dequantizing.
+    /// This copies the raw bytes from the memory-mapped file into an owned Vec<u8>.
+    pub fn get_weight_matrix(&self, name: &str) -> Result<WeightMatrix> {
+        let info = self
+            .tensors
+            .get(name)
+            .context(format!("Tensor '{}' not found", name))?;
+
+        let numel: usize = info.shape.iter().product();
+        let data_offset = self.payload_offset + info.offset;
+
+        let shape = match info.shape.len() {
+            1 => [1, info.shape[0]],
+            _ => [info.shape[0], info.shape[1..].iter().product()],
+        };
+
+        match info.dtype.as_str() {
+            "f32" => {
+                let data_end = data_offset + numel * 4;
+                let data = self.mmap[data_offset..data_end].to_vec();
+
+                Ok(WeightMatrix::Native {
+                    data,
+                    shape,
+                    dtype: TensorDtype::F32,
+                    scales: None,
+                    group_size: 0,
+                })
+            }
+            "f16" => {
+                let data_end = data_offset + numel * 2;
+                let data = self.mmap[data_offset..data_end].to_vec();
+
+                Ok(WeightMatrix::Native {
+                    data,
+                    shape,
+                    dtype: TensorDtype::F16,
+                    scales: None,
+                    group_size: 0,
+                })
+            }
+            "bf16" => {
+                let data_end = data_offset + numel * 2;
+                let data = self.mmap[data_offset..data_end].to_vec();
+
+                Ok(WeightMatrix::Native {
+                    data,
+                    shape,
+                    dtype: TensorDtype::BF16,
+                    scales: None,
+                    group_size: 0,
+                })
+            }
+            "int8" => {
+                let scale_offset = self.payload_offset + info.scale_offset.unwrap();
+                let scale_size = info.scale_size.unwrap();
+                let group_size = 64;
+
+                let data_end = data_offset + numel;
+                let data = self.mmap[data_offset..data_end].to_vec();
+
+                let scale_end = scale_offset + scale_size * 4;
+                let scales = Some(self.mmap[scale_offset..scale_end].to_vec());
+
+                Ok(WeightMatrix::Native {
+                    data,
+                    shape,
+                    dtype: TensorDtype::Int8,
+                    scales,
+                    group_size,
+                })
+            }
+            "q8_0" => {
+                let n_blocks = numel.div_ceil(QK8_0);
+                let data_end = data_offset + n_blocks * Q8_0Block::SIZE;
+                let data = self.mmap[data_offset..data_end].to_vec();
+
+                Ok(WeightMatrix::Native {
+                    data,
+                    shape,
+                    dtype: TensorDtype::Q8_0,
+                    scales: None,
+                    group_size: QK8_0,
+                })
+            }
+            "q4_0" => {
+                let n_blocks = numel.div_ceil(QK4_0);
+                let data_end = data_offset + n_blocks * Q4_0Block::SIZE;
+                let data = self.mmap[data_offset..data_end].to_vec();
+
+                Ok(WeightMatrix::Native {
+                    data,
+                    shape,
+                    dtype: TensorDtype::Q4_0,
+                    scales: None,
+                    group_size: QK4_0,
+                })
+            }
+            "q4_k_m" | "q4_k" => {
+                let n_blocks = numel.div_ceil(QK_K);
+                let data_end = data_offset + n_blocks * Q4KMBlock::SIZE;
+                let data = self.mmap[data_offset..data_end].to_vec();
+
+                Ok(WeightMatrix::Native {
+                    data,
+                    shape,
+                    dtype: TensorDtype::Q4_K_M,
+                    scales: None,
+                    group_size: QK_K,
+                })
+            }
+            "q4_k_s" => {
+                let n_blocks = numel.div_ceil(QK_K);
+                let data_end = data_offset + n_blocks * Q4KSBlock::SIZE;
+                let data = self.mmap[data_offset..data_end].to_vec();
+
+                Ok(WeightMatrix::Native {
+                    data,
+                    shape,
                     dtype: TensorDtype::Q4_K_S,
                     scales: None,
                     group_size: QK_K,

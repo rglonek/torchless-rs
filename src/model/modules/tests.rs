@@ -1,4 +1,4 @@
-use crate::loader::{Config, Parameters};
+use crate::loader::{Config, Parameters, WeightMatrix};
 use crate::model::{Attention, Embedding, InferenceState, LazyMistral, Mistral, RMSNorm, MLP};
 use ndarray::{Array1, Array2};
 
@@ -37,7 +37,7 @@ fn test_embedding_forward() {
     let table = Array2::from_shape_fn((config.vocab_size, config.hidden_size), |(i, j)| {
         (i * config.hidden_size + j) as f32
     });
-    let embedding = Embedding::new(table.clone());
+    let embedding = Embedding::new(WeightMatrix::from_f32(table.clone()));
 
     // Test lookup
     let token_id = 42u32;
@@ -90,7 +90,11 @@ fn test_mlp_forward() {
             (i + j) as f32 * 0.001
         });
 
-    let mlp = MLP::new(gate_proj, up_proj, down_proj);
+    let mlp = MLP::new(
+        WeightMatrix::from_f32(gate_proj),
+        WeightMatrix::from_f32(up_proj),
+        WeightMatrix::from_f32(down_proj),
+    );
 
     let hidden_before = state.hidden_state.clone();
     mlp.forward(&mut state);
@@ -130,7 +134,13 @@ fn test_attention_shape_preservation() {
             (i as f32 + j as f32) * 0.01
         });
 
-    let attention = Attention::new(0, q_proj, k_proj, v_proj, o_proj);
+    let attention = Attention::new(
+        0,
+        WeightMatrix::from_f32(q_proj),
+        WeightMatrix::from_f32(k_proj),
+        WeightMatrix::from_f32(v_proj),
+        WeightMatrix::from_f32(o_proj),
+    );
 
     attention.forward(&mut state);
 
@@ -281,7 +291,7 @@ fn test_lazy_embedding_lookup() {
     // Compare with eager embedding
     let embed_data = params.get_tensor("model.embed_tokens.weight").unwrap();
     let embed_table = Array2::from_shape_vec((300, 32), embed_data).unwrap();
-    let eager_embed = Embedding::new(embed_table);
+    let eager_embed = Embedding::new(WeightMatrix::from_f32(embed_table));
 
     let mut eager_state = InferenceState::new(params.config.clone());
     eager_embed.forward(&mut eager_state, 10);

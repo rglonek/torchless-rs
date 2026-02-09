@@ -1,13 +1,13 @@
 use super::super::InferenceState;
 use super::MLP;
-use crate::kernels;
-use ndarray::{Array1, Array2};
+use crate::loader::WeightMatrix;
+use ndarray::Array1;
 
 /// Router / gating module for Mixture-of-Experts.
 /// Computes expert selection probabilities via a learned gate weight matrix.
 pub struct MoERouter {
     /// Gate weight matrix: [n_experts, hidden_size]
-    pub gate_weight: Array2<f32>,
+    pub gate_weight: WeightMatrix,
     /// Total number of routed experts
     pub n_experts: usize,
     /// Number of experts to activate per token (top-k)
@@ -15,7 +15,7 @@ pub struct MoERouter {
 }
 
 impl MoERouter {
-    pub fn new(gate_weight: Array2<f32>, n_experts: usize, top_k: usize) -> Self {
+    pub fn new(gate_weight: WeightMatrix, n_experts: usize, top_k: usize) -> Self {
         Self {
             gate_weight,
             n_experts,
@@ -29,7 +29,10 @@ impl MoERouter {
     /// - expert_weights: Vec of corresponding softmax-normalized weights
     pub fn route(&self, state: &InferenceState) -> (Vec<usize>, Vec<f32>) {
         // router_logits = gate_weight @ hidden_state -> [n_experts]
-        let router_logits = kernels::matmul_vec(&self.gate_weight, &state.hidden_state);
+        let logits_vec = self
+            .gate_weight
+            .matmul_vec(state.hidden_state.as_slice().unwrap());
+        let router_logits = Array1::from_vec(logits_vec);
 
         self.top_k_softmax(&router_logits)
     }
@@ -161,7 +164,7 @@ impl MoE {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loader::Config;
+    use crate::loader::{Config, WeightMatrix};
     use ndarray::Array2;
 
     fn make_test_config() -> Config {
@@ -203,7 +206,7 @@ mod tests {
         gate[[2, 0]] = 0.2; // expert 2: weak
         gate[[3, 0]] = 5.0; // expert 3: moderate
 
-        let router = MoERouter::new(gate, 4, 2);
+        let router = MoERouter::new(WeightMatrix::from_f32(gate), 4, 2);
         let (indices, weights) = router.route(&state);
 
         assert_eq!(indices.len(), 2);
@@ -227,15 +230,15 @@ mod tests {
         let mut gate = Array2::zeros((4, 4));
         gate[[0, 0]] = 100.0; // strongly favor expert 0
 
-        let router = MoERouter::new(gate, 4, 1);
+        let router = MoERouter::new(WeightMatrix::from_f32(gate), 4, 1);
 
         // Create trivial experts (identity-like: down_proj @ (gate_proj @ x * up_proj @ x))
         let experts: Vec<MLP> = (0..4)
             .map(|_| {
                 MLP::new(
-                    Array2::from_elem((8, 4), 0.1),
-                    Array2::from_elem((8, 4), 0.1),
-                    Array2::from_elem((4, 8), 0.1),
+                    WeightMatrix::from_f32(Array2::from_elem((8, 4), 0.1)),
+                    WeightMatrix::from_f32(Array2::from_elem((8, 4), 0.1)),
+                    WeightMatrix::from_f32(Array2::from_elem((4, 8), 0.1)),
                 )
             })
             .collect();

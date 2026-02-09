@@ -23,13 +23,12 @@
 //! model.forward(&mut state, token, false);
 //! ```
 
-use crate::kernels;
-use crate::loader::{Config, Parameters};
+use crate::loader::{Config, Parameters, WeightMatrix};
 use crate::model::architecture::{ArchitectureConfig, Model, ModelArchitecture, TensorNamePattern};
 use crate::model::{Attention, Embedding, InferenceState};
 use crate::model::{LazyAttention, LazyEmbedding, LazyMLP};
 use anyhow::Result;
-use ndarray::{Array1, Array2};
+use ndarray::Array1;
 
 /// Gemma-style RMSNorm with offset (applies as (1 + weight) * x)
 pub struct GemmaRMSNorm {
@@ -65,13 +64,13 @@ impl GemmaRMSNorm {
 
 /// Gemma-style MLP with GeGLU activation
 pub struct GemmaMLP {
-    pub gate_proj: Array2<f32>, // [intermediate_size, hidden_size]
-    pub up_proj: Array2<f32>,   // [intermediate_size, hidden_size]
-    pub down_proj: Array2<f32>, // [hidden_size, intermediate_size]
+    pub gate_proj: WeightMatrix, // [intermediate_size, hidden_size]
+    pub up_proj: WeightMatrix,   // [intermediate_size, hidden_size]
+    pub down_proj: WeightMatrix, // [hidden_size, intermediate_size]
 }
 
 impl GemmaMLP {
-    pub fn new(gate_proj: Array2<f32>, up_proj: Array2<f32>, down_proj: Array2<f32>) -> Self {
+    pub fn new(gate_proj: WeightMatrix, up_proj: WeightMatrix, down_proj: WeightMatrix) -> Self {
         Self {
             gate_proj,
             up_proj,
@@ -90,42 +89,28 @@ impl GemmaMLP {
     /// Forward pass: GeGLU (GELU-gated GLU)
     /// out = down_proj @ (gelu(gate_proj @ x) * (up_proj @ x))
     pub fn forward(&self, state: &mut InferenceState) {
+        let hidden_slice = state.hidden_state.as_slice().unwrap();
+
         // gate = gate_proj @ hidden_state
-        let gate = kernels::matmul_vec(&self.gate_proj, &state.hidden_state);
+        let gate = self.gate_proj.matmul_vec(hidden_slice);
 
         // up = up_proj @ hidden_state
-        let up = kernels::matmul_vec(&self.up_proj, &state.hidden_state);
+        let up = self.up_proj.matmul_vec(hidden_slice);
 
         // Apply GELU to gate and multiply with up
-        let mut intermediate = Array1::zeros(gate.len());
+        let mut intermediate = vec![0.0f32; gate.len()];
         for i in 0..gate.len() {
             intermediate[i] = Self::gelu(gate[i]) * up[i];
         }
 
         // down_proj @ intermediate
-        state
-            .hidden_state
-            .assign(&kernels::matmul_vec(&self.down_proj, &intermediate));
+        self.down_proj
+            .matmul_vec_into(&intermediate, state.hidden_state.as_slice_mut().unwrap());
     }
 
     /// Optimized forward pass
     pub fn fast_forward(&self, state: &mut InferenceState) {
-        // gate = gate_proj @ hidden_state (parallel when available)
-        let gate = kernels::fast_matmul_vec(&self.gate_proj, &state.hidden_state);
-
-        // up = up_proj @ hidden_state (parallel when available)
-        let up = kernels::fast_matmul_vec(&self.up_proj, &state.hidden_state);
-
-        // Apply GELU to gate and multiply with up
-        let mut intermediate = Array1::zeros(gate.len());
-        for i in 0..gate.len() {
-            intermediate[i] = Self::gelu(gate[i]) * up[i];
-        }
-
-        // down_proj @ intermediate (parallel when available)
-        state
-            .hidden_state
-            .assign(&kernels::fast_matmul_vec(&self.down_proj, &intermediate));
+        self.forward(state)
     }
 }
 
@@ -223,7 +208,7 @@ pub struct Gemma {
     pub layers: Vec<GemmaLayer>,
     pub norm: GemmaRMSNorm,
     /// LM head - for Gemma this is the same as embedding (tied weights)
-    pub lm_head: Array2<f32>,
+    pub lm_head: WeightMatrix,
     pub tokenizer: crate::tokenizer::Tokenizer,
 }
 
@@ -237,24 +222,15 @@ impl Gemma {
 
         // Load embedding table
         eprintln!("Loading Gemma embedding table...");
-        let embed_data = params.get_tensor(tensor_names.embed_tokens)?;
-        let embed_shape = params.get_tensor_shape(tensor_names.embed_tokens).unwrap();
-        let embed_array =
-            Array2::from_shape_vec((embed_shape[0], embed_shape[1]), embed_data.clone())?;
-        let embedding = Embedding::new(embed_array.clone());
+        let embedding = Embedding::new(params.get_weight_matrix(tensor_names.embed_tokens)?);
 
-        // For Gemma, LM head uses tied embeddings (transposed)
-        // embed_tokens: [vocab_size, hidden_size]
-        // lm_head needs: [vocab_size, hidden_size] (same as embed for tied weights)
-        eprintln!("Using tied embeddings for Gemma LM head...");
+        // For Gemma, LM head uses tied embeddings - share with embedding if lm_head.weight doesn't exist
+        eprintln!("Loading Gemma LM head...");
         let lm_head = if params.get_tensor_shape("lm_head.weight").is_some() {
-            // If lm_head exists separately, use it
-            let lm_head_data = params.get_tensor("lm_head.weight")?;
-            let lm_head_shape = params.get_tensor_shape("lm_head.weight").unwrap();
-            Array2::from_shape_vec((lm_head_shape[0], lm_head_shape[1]), lm_head_data)?
+            params.get_weight_matrix("lm_head.weight")?
         } else {
             // Use embedding weights (tied)
-            embed_array
+            embedding.table.clone()
         };
 
         // Load final norm
@@ -324,10 +300,8 @@ impl Gemma {
         ))
     }
 
-    fn load_weight(params: &Parameters, name: &str) -> Result<Array2<f32>> {
-        let data = params.get_tensor(name)?;
-        let shape = params.get_tensor_shape(name).unwrap();
-        Ok(Array2::from_shape_vec((shape[0], shape[1]), data)?)
+    fn load_weight(params: &Parameters, name: &str) -> Result<WeightMatrix> {
+        params.get_weight_matrix(name)
     }
 
     /// Forward pass
@@ -344,9 +318,10 @@ impl Gemma {
         self.norm.forward(state);
 
         // LM head projection
-        state
-            .logits
-            .assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 
     /// Optimized forward pass
@@ -362,11 +337,11 @@ impl Gemma {
         // Final norm
         self.norm.fast_forward(state);
 
-        // LM head projection (parallel when available)
-        state.logits.assign(&kernels::fast_matmul_vec(
-            &self.lm_head,
-            &state.hidden_state,
-        ));
+        // LM head projection
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 }
 

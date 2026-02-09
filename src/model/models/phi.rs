@@ -23,13 +23,12 @@
 //! model.forward(&mut state, token, false);
 //! ```
 
-use crate::kernels;
-use crate::loader::{Config, Parameters};
+use crate::loader::{Config, Parameters, WeightMatrix};
 use crate::model::architecture::{ArchitectureConfig, Model, ModelArchitecture};
 use crate::model::LazyEmbedding;
 use crate::model::{Attention, Embedding, InferenceState};
 use anyhow::Result;
-use ndarray::{Array1, Array2};
+use ndarray::{s, Array1, Array2};
 
 /// Layer Normalization (used by Phi instead of RMSNorm)
 pub struct LayerNorm {
@@ -71,16 +70,16 @@ impl LayerNorm {
 /// Phi-style MLP with fused gate+up projection and GELU activation
 pub struct PhiMLP {
     /// Fused gate and up projection: [2 * intermediate_size, hidden_size]
-    pub gate_up_proj: Array2<f32>,
+    pub gate_up_proj: WeightMatrix,
     /// Down projection: [hidden_size, intermediate_size]
-    pub down_proj: Array2<f32>,
+    pub down_proj: WeightMatrix,
     /// Intermediate size (half of gate_up_proj output)
     pub intermediate_size: usize,
 }
 
 impl PhiMLP {
-    pub fn new(gate_up_proj: Array2<f32>, down_proj: Array2<f32>) -> Self {
-        let intermediate_size = gate_up_proj.shape()[0] / 2;
+    pub fn new(gate_up_proj: WeightMatrix, down_proj: WeightMatrix) -> Self {
+        let intermediate_size = gate_up_proj.nrows() / 2;
         Self {
             gate_up_proj,
             down_proj,
@@ -98,7 +97,9 @@ impl PhiMLP {
     /// Forward pass: fused gate+up with GELU activation
     pub fn forward(&self, state: &mut InferenceState) {
         // Project to fused gate+up
-        let fused = kernels::matmul_vec(&self.gate_up_proj, &state.hidden_state);
+        let fused = self
+            .gate_up_proj
+            .matmul_vec(state.hidden_state.as_slice().unwrap());
 
         // Split and apply gated activation
         // First half is gate (apply GELU), second half is up
@@ -110,15 +111,18 @@ impl PhiMLP {
         }
 
         // Down projection
-        state
-            .hidden_state
-            .assign(&kernels::matmul_vec(&self.down_proj, &intermediate));
+        self.down_proj.matmul_vec_into(
+            intermediate.as_slice().unwrap(),
+            state.hidden_state.as_slice_mut().unwrap(),
+        );
     }
 
     /// Optimized forward pass
     pub fn fast_forward(&self, state: &mut InferenceState) {
         // Use parallel matmul when available
-        let fused = kernels::fast_matmul_vec(&self.gate_up_proj, &state.hidden_state);
+        let fused = self
+            .gate_up_proj
+            .matmul_vec(state.hidden_state.as_slice().unwrap());
 
         // Split and apply gated activation
         let mut intermediate = Array1::zeros(self.intermediate_size);
@@ -129,9 +133,10 @@ impl PhiMLP {
         }
 
         // Down projection
-        state
-            .hidden_state
-            .assign(&kernels::fast_matmul_vec(&self.down_proj, &intermediate));
+        self.down_proj.matmul_vec_into(
+            intermediate.as_slice().unwrap(),
+            state.hidden_state.as_slice_mut().unwrap(),
+        );
     }
 }
 
@@ -220,7 +225,7 @@ pub struct Phi {
     pub embedding: Embedding,
     pub layers: Vec<PhiLayer>,
     pub final_norm: LayerNorm,
-    pub lm_head: Array2<f32>,
+    pub lm_head: WeightMatrix,
     pub tokenizer: crate::tokenizer::Tokenizer,
 }
 
@@ -239,12 +244,7 @@ impl Phi {
 
         // Load embedding table
         eprintln!("Loading Phi embedding table...");
-        let embed_data = params.get_tensor(embed_name)?;
-        let embed_shape = params.get_tensor_shape(embed_name).unwrap();
-        let embedding = Embedding::new(Array2::from_shape_vec(
-            (embed_shape[0], embed_shape[1]),
-            embed_data,
-        )?);
+        let embedding = Embedding::new(params.get_weight_matrix(embed_name)?);
 
         // Load final norm (LayerNorm with bias)
         eprintln!("Loading Phi final norm...");
@@ -260,9 +260,7 @@ impl Phi {
 
         // Load LM head
         eprintln!("Loading Phi LM head...");
-        let lm_head_data = params.get_tensor(lm_head_name)?;
-        let lm_head_shape = params.get_tensor_shape(lm_head_name).unwrap();
-        let lm_head = Array2::from_shape_vec((lm_head_shape[0], lm_head_shape[1]), lm_head_data)?;
+        let lm_head = params.get_weight_matrix(lm_head_name)?;
 
         // Load layers
         eprintln!("Loading {} Phi layers...", config.n_layers);
@@ -300,17 +298,17 @@ impl Phi {
         );
 
         // Load attention projections
-        let q_proj = Self::load_weight(params, &format!("{}.self_attn.q_proj.weight", prefix))?;
-        let k_proj = Self::load_weight(params, &format!("{}.self_attn.k_proj.weight", prefix))?;
-        let v_proj = Self::load_weight(params, &format!("{}.self_attn.v_proj.weight", prefix))?;
+        let q_proj = params.get_weight_matrix(&format!("{}.self_attn.q_proj.weight", prefix))?;
+        let k_proj = params.get_weight_matrix(&format!("{}.self_attn.k_proj.weight", prefix))?;
+        let v_proj = params.get_weight_matrix(&format!("{}.self_attn.v_proj.weight", prefix))?;
 
         // Phi uses "dense" for output projection
         let o_proj_name = format!("{}.self_attn.dense.weight", prefix);
         let o_proj = if params.get_tensor_shape(&o_proj_name).is_some() {
-            Self::load_weight(params, &o_proj_name)?
+            params.get_weight_matrix(&o_proj_name)?
         } else {
             // Fall back to o_proj naming
-            Self::load_weight(params, &format!("{}.self_attn.o_proj.weight", prefix))?
+            params.get_weight_matrix(&format!("{}.self_attn.o_proj.weight", prefix))?
         };
 
         let self_attn = Attention::new(layer_idx, q_proj, k_proj, v_proj, o_proj);
@@ -318,36 +316,34 @@ impl Phi {
         // Load MLP with fused gate+up projection
         let gate_up_name = format!("{}.mlp.gate_up_proj.weight", prefix);
         let gate_up_proj = if params.get_tensor_shape(&gate_up_name).is_some() {
-            Self::load_weight(params, &gate_up_name)?
+            params.get_weight_matrix(&gate_up_name)?
         } else {
-            // Fall back to separate gate and up projections
-            let gate = Self::load_weight(params, &format!("{}.mlp.gate_proj.weight", prefix))?;
-            let up = Self::load_weight(params, &format!("{}.mlp.up_proj.weight", prefix))?;
-            // Concatenate along dimension 0
-            let mut fused = Array2::zeros((gate.shape()[0] + up.shape()[0], gate.shape()[1]));
-            for i in 0..gate.shape()[0] {
-                for j in 0..gate.shape()[1] {
-                    fused[[i, j]] = gate[[i, j]];
-                }
-            }
-            for i in 0..up.shape()[0] {
-                for j in 0..up.shape()[1] {
-                    fused[[i + gate.shape()[0], j]] = up[[i, j]];
-                }
-            }
-            fused
+            // Fall back to separate gate and up projections - stack into F32 WeightMatrix
+            let gate_data = params.get_tensor(&format!("{}.mlp.gate_proj.weight", prefix))?;
+            let gate_shape = params
+                .get_tensor_shape(&format!("{}.mlp.gate_proj.weight", prefix))
+                .unwrap();
+            let up_data = params.get_tensor(&format!("{}.mlp.up_proj.weight", prefix))?;
+            let up_shape = params
+                .get_tensor_shape(&format!("{}.mlp.up_proj.weight", prefix))
+                .unwrap();
+
+            let gate_rows = gate_shape[0];
+            let up_rows = up_shape[0];
+            let cols = gate_shape[1];
+
+            let mut fused = Array2::zeros((gate_rows + up_rows, cols));
+            let gate_arr = Array2::from_shape_vec((gate_rows, cols), gate_data)?;
+            let up_arr = Array2::from_shape_vec((up_rows, cols), up_data)?;
+            fused.slice_mut(s![..gate_rows, ..]).assign(&gate_arr);
+            fused.slice_mut(s![gate_rows.., ..]).assign(&up_arr);
+            WeightMatrix::from_f32(fused)
         };
-        let down_proj = Self::load_weight(params, &format!("{}.mlp.down_proj.weight", prefix))?;
+        let down_proj = params.get_weight_matrix(&format!("{}.mlp.down_proj.weight", prefix))?;
 
         let mlp = PhiMLP::new(gate_up_proj, down_proj);
 
         Ok(PhiLayer::new(input_layernorm, self_attn, mlp))
-    }
-
-    fn load_weight(params: &Parameters, name: &str) -> Result<Array2<f32>> {
-        let data = params.get_tensor(name)?;
-        let shape = params.get_tensor_shape(name).unwrap();
-        Ok(Array2::from_shape_vec((shape[0], shape[1]), data)?)
     }
 
     /// Forward pass
@@ -364,9 +360,10 @@ impl Phi {
         self.final_norm.forward(state);
 
         // LM head projection
-        state
-            .logits
-            .assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 
     /// Optimized forward pass
@@ -383,10 +380,10 @@ impl Phi {
         self.final_norm.fast_forward(state);
 
         // LM head projection (parallel when available)
-        state.logits.assign(&kernels::fast_matmul_vec(
-            &self.lm_head,
-            &state.hidden_state,
-        ));
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 }
 

@@ -21,7 +21,7 @@ pub use coding::{
 };
 
 // Core loader types
-pub use loader::{Config, Parameters, TensorDtype, TensorView};
+pub use loader::{Config, Parameters, TensorDtype, TensorView, WeightMatrix};
 
 // Quantization support (Phase 2)
 pub use loader::{

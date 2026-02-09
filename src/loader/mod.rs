@@ -6,11 +6,13 @@ mod parameters;
 pub mod quantization;
 #[cfg(test)]
 mod tests;
+pub mod weight_matrix;
 
 pub use parameters::{Parameters, TensorDtype, TensorView};
 pub use quantization::{
     Q4KMBlock, Q4KSBlock, Q4_0Block, Q8_0Block, QuantFormat, QuantizedTensor, QK4_0, QK8_0, QK_K,
 };
+pub use weight_matrix::WeightMatrix;
 
 // Phase 7: Format Support
 pub use formats::{

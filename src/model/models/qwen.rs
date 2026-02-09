@@ -25,7 +25,7 @@
 #![allow(clippy::needless_range_loop)]
 
 use crate::kernels;
-use crate::loader::{Config, Parameters};
+use crate::loader::{Config, Parameters, WeightMatrix};
 use crate::model::architecture::{ArchitectureConfig, Model, ModelArchitecture};
 use crate::model::LazyEmbedding;
 use crate::model::{Embedding, InferenceState, RMSNorm, MLP};
@@ -36,9 +36,9 @@ use ndarray::{s, Array1, Array2};
 pub struct QwenAttention {
     pub layer_idx: usize,
     /// Fused Q/K/V projection: [(n_heads + 2*n_kv_heads) * head_dim, hidden_size]
-    pub c_attn: Array2<f32>,
+    pub c_attn: WeightMatrix,
     /// Output projection: [hidden_size, n_heads * head_dim]
-    pub c_proj: Array2<f32>,
+    pub c_proj: WeightMatrix,
     /// Number of attention heads
     pub n_heads: usize,
     /// Number of KV heads (for GQA)
@@ -50,8 +50,8 @@ pub struct QwenAttention {
 impl QwenAttention {
     pub fn new(
         layer_idx: usize,
-        c_attn: Array2<f32>,
-        c_proj: Array2<f32>,
+        c_attn: WeightMatrix,
+        c_proj: WeightMatrix,
         n_heads: usize,
         n_kv_heads: usize,
         head_dim: usize,
@@ -69,7 +69,9 @@ impl QwenAttention {
     /// Forward pass with fused QKV
     pub fn forward(&self, state: &mut InferenceState) {
         // Fused QKV projection
-        let qkv = kernels::matmul_vec(&self.c_attn, &state.hidden_state);
+        let qkv = self
+            .c_attn
+            .matmul_vec(state.hidden_state.as_slice().unwrap());
 
         // Split into Q, K, V
         let q_size = self.n_heads * self.head_dim;
@@ -148,13 +150,18 @@ impl QwenAttention {
         }
 
         // Output projection
-        kernels::matmul_vec_into(&self.c_proj, &state.context_flat, &mut state.hidden_state);
+        self.c_proj.matmul_vec_into(
+            state.context_flat.as_slice().unwrap(),
+            state.hidden_state.as_slice_mut().unwrap(),
+        );
     }
 
     /// Optimized forward pass
     pub fn fast_forward(&self, state: &mut InferenceState) {
         // Fused QKV projection (parallel when available)
-        let qkv = kernels::fast_matmul_vec(&self.c_attn, &state.hidden_state);
+        let qkv = self
+            .c_attn
+            .matmul_vec(state.hidden_state.as_slice().unwrap());
 
         // Split into Q, K, V
         let q_size = self.n_heads * self.head_dim;
@@ -230,7 +237,10 @@ impl QwenAttention {
         }
 
         // Output projection (parallel when available)
-        kernels::fast_matmul_vec_into(&self.c_proj, &state.context_flat, &mut state.hidden_state);
+        self.c_proj.matmul_vec_into(
+            state.context_flat.as_slice().unwrap(),
+            state.hidden_state.as_slice_mut().unwrap(),
+        );
     }
 }
 
@@ -322,7 +332,7 @@ pub struct Qwen {
     pub embedding: Embedding,
     pub layers: Vec<QwenLayer>,
     pub ln_f: RMSNorm,
-    pub lm_head: Array2<f32>,
+    pub lm_head: WeightMatrix,
     pub tokenizer: crate::tokenizer::Tokenizer,
 }
 
@@ -340,12 +350,7 @@ impl Qwen {
 
         // Load embedding table
         eprintln!("Loading Qwen embedding table...");
-        let embed_data = params.get_tensor(&embed_name)?;
-        let embed_shape = params.get_tensor_shape(&embed_name).unwrap();
-        let embedding = Embedding::new(Array2::from_shape_vec(
-            (embed_shape[0], embed_shape[1]),
-            embed_data,
-        )?);
+        let embedding = Embedding::new(params.get_weight_matrix(&embed_name)?);
 
         // Load final norm
         eprintln!("Loading Qwen final norm...");
@@ -354,9 +359,7 @@ impl Qwen {
 
         // Load LM head
         eprintln!("Loading Qwen LM head...");
-        let lm_head_data = params.get_tensor(lm_head_name)?;
-        let lm_head_shape = params.get_tensor_shape(lm_head_name).unwrap();
-        let lm_head = Array2::from_shape_vec((lm_head_shape[0], lm_head_shape[1]), lm_head_data)?;
+        let lm_head = params.get_weight_matrix(lm_head_name)?;
 
         // Load layers
         eprintln!("Loading {} Qwen layers...", config.n_layers);
@@ -447,39 +450,43 @@ impl Qwen {
                 head_dim,
             )
         } else {
-            // Separate Q, K, V (fall back to standard naming)
-            let q = Self::load_weight(params, &format!("{}.self_attn.q_proj.weight", prefix))?;
-            let k = Self::load_weight(params, &format!("{}.self_attn.k_proj.weight", prefix))?;
-            let v = Self::load_weight(params, &format!("{}.self_attn.v_proj.weight", prefix))?;
-            let o = Self::load_weight(params, &format!("{}.self_attn.o_proj.weight", prefix))?;
+            // Separate Q, K, V (fall back to standard naming) - stack into F32 WeightMatrix
+            let q_data = params.get_tensor(&format!("{}.self_attn.q_proj.weight", prefix))?;
+            let q_shape = params
+                .get_tensor_shape(&format!("{}.self_attn.q_proj.weight", prefix))
+                .unwrap();
+            let k_data = params.get_tensor(&format!("{}.self_attn.k_proj.weight", prefix))?;
+            let k_shape = params
+                .get_tensor_shape(&format!("{}.self_attn.k_proj.weight", prefix))
+                .unwrap();
+            let v_data = params.get_tensor(&format!("{}.self_attn.v_proj.weight", prefix))?;
+            let v_shape = params
+                .get_tensor_shape(&format!("{}.self_attn.v_proj.weight", prefix))
+                .unwrap();
 
-            // Create fused QKV from separate projections
-            let q_size = q.shape()[0];
-            let k_size = k.shape()[0];
-            let v_size = v.shape()[0];
-            let hidden = q.shape()[1];
+            let q_size = q_shape[0];
+            let k_size = k_shape[0];
+            let v_size = v_shape[0];
+            let hidden = q_shape[1];
 
             let mut c_attn = Array2::zeros((q_size + k_size + v_size, hidden));
-            for i in 0..q_size {
-                for j in 0..hidden {
-                    c_attn[[i, j]] = q[[i, j]];
-                }
-            }
-            for i in 0..k_size {
-                for j in 0..hidden {
-                    c_attn[[q_size + i, j]] = k[[i, j]];
-                }
-            }
-            for i in 0..v_size {
-                for j in 0..hidden {
-                    c_attn[[q_size + k_size + i, j]] = v[[i, j]];
-                }
-            }
+            let q_arr = Array2::from_shape_vec((q_size, hidden), q_data)?;
+            let k_arr = Array2::from_shape_vec((k_size, hidden), k_data)?;
+            let v_arr = Array2::from_shape_vec((v_size, hidden), v_data)?;
+            c_attn.slice_mut(s![..q_size, ..]).assign(&q_arr);
+            c_attn
+                .slice_mut(s![q_size..q_size + k_size, ..])
+                .assign(&k_arr);
+            c_attn.slice_mut(s![q_size + k_size.., ..]).assign(&v_arr);
+
+            let c_attn = WeightMatrix::from_f32(c_attn);
+            let c_proj =
+                params.get_weight_matrix(&format!("{}.self_attn.o_proj.weight", prefix))?;
 
             QwenAttention::new(
                 layer_idx,
                 c_attn,
-                o,
+                c_proj,
                 config.n_heads,
                 config.n_kv_heads,
                 head_dim,
@@ -507,10 +514,8 @@ impl Qwen {
         Ok(QwenLayer::new(ln_1, attn, ln_2, mlp))
     }
 
-    fn load_weight(params: &Parameters, name: &str) -> Result<Array2<f32>> {
-        let data = params.get_tensor(name)?;
-        let shape = params.get_tensor_shape(name).unwrap();
-        Ok(Array2::from_shape_vec((shape[0], shape[1]), data)?)
+    fn load_weight(params: &Parameters, name: &str) -> Result<WeightMatrix> {
+        params.get_weight_matrix(name)
     }
 
     /// Forward pass
@@ -527,9 +532,10 @@ impl Qwen {
         self.ln_f.forward(state);
 
         // LM head projection
-        state
-            .logits
-            .assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 
     /// Optimized forward pass
@@ -546,10 +552,10 @@ impl Qwen {
         self.ln_f.fast_forward(state);
 
         // LM head projection (parallel when available)
-        state.logits.assign(&kernels::fast_matmul_vec(
-            &self.lm_head,
-            &state.hidden_state,
-        ));
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 }
 

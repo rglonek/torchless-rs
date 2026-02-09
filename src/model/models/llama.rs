@@ -24,14 +24,14 @@
 //! ```
 
 use crate::kernels;
-use crate::loader::{Config, Parameters};
+use crate::loader::{Config, Parameters, WeightMatrix};
 use crate::model::architecture::{
     ArchitectureConfig, Model, ModelArchitecture, RopeScaling, TensorNamePattern,
 };
 use crate::model::{Attention, Embedding, InferenceState, Layer, RMSNorm, MLP};
 use crate::model::{LazyAttention, LazyEmbedding, LazyLayer, LazyMLP};
 use anyhow::Result;
-use ndarray::{Array1, Array2};
+use ndarray::Array1;
 
 /// LLaMA model with eager weight loading
 pub struct LLaMA {
@@ -40,7 +40,7 @@ pub struct LLaMA {
     pub embedding: Embedding,
     pub layers: Vec<Layer>,
     pub norm: RMSNorm,
-    pub lm_head: Array2<f32>,
+    pub lm_head: WeightMatrix,
     pub tokenizer: crate::tokenizer::Tokenizer,
 }
 
@@ -56,12 +56,7 @@ impl LLaMA {
 
         // Load embedding table
         eprintln!("Loading LLaMA embedding table...");
-        let embed_data = params.get_tensor(tensor_names.embed_tokens)?;
-        let embed_shape = params.get_tensor_shape(tensor_names.embed_tokens).unwrap();
-        let embedding = Embedding::new(Array2::from_shape_vec(
-            (embed_shape[0], embed_shape[1]),
-            embed_data,
-        )?);
+        let embedding = Embedding::new(params.get_weight_matrix(tensor_names.embed_tokens)?);
 
         // Load final norm
         eprintln!("Loading LLaMA final norm...");
@@ -70,9 +65,7 @@ impl LLaMA {
 
         // Load LM head
         eprintln!("Loading LLaMA LM head...");
-        let lm_head_data = params.get_tensor(tensor_names.lm_head)?;
-        let lm_head_shape = params.get_tensor_shape(tensor_names.lm_head).unwrap();
-        let lm_head = Array2::from_shape_vec((lm_head_shape[0], lm_head_shape[1]), lm_head_data)?;
+        let lm_head = params.get_weight_matrix(tensor_names.lm_head)?;
 
         // Load layers
         eprintln!("Loading {} LLaMA layers...", config.n_layers);
@@ -149,10 +142,8 @@ impl LLaMA {
         ))
     }
 
-    fn load_weight(params: &Parameters, name: &str) -> Result<Array2<f32>> {
-        let data = params.get_tensor(name)?;
-        let shape = params.get_tensor_shape(name).unwrap();
-        Ok(Array2::from_shape_vec((shape[0], shape[1]), data)?)
+    fn load_weight(params: &Parameters, name: &str) -> Result<WeightMatrix> {
+        params.get_weight_matrix(name)
     }
 
     /// Compute scaled RoPE frequencies for extended context
@@ -234,9 +225,10 @@ impl LLaMA {
         self.norm.forward(state);
 
         // LM head projection
-        state
-            .logits
-            .assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 
     /// Optimized forward pass
@@ -252,11 +244,11 @@ impl LLaMA {
         // Final norm (SIMD when available)
         self.norm.fast_forward(state);
 
-        // LM head projection (parallel when available)
-        state.logits.assign(&kernels::fast_matmul_vec(
-            &self.lm_head,
-            &state.hidden_state,
-        ));
+        // LM head projection
+        self.lm_head.matmul_vec_into(
+            state.hidden_state.as_slice().unwrap(),
+            state.logits.as_slice_mut().unwrap(),
+        );
     }
 }
 

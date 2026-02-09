@@ -176,40 +176,13 @@ pub enum HipMemcpyKind {
     Default = 4,
 }
 
-// External HIP functions (linked at runtime)
+// External HIP and rocBLAS functions (loaded at runtime via libloading)
 #[cfg(feature = "rocm")]
-#[allow(dead_code)]
-mod hip_ffi {
-    use super::*;
+#[allow(dead_code, non_snake_case)]
+mod rocm_ffi {
+    use super::HipMemcpyKind;
     use std::os::raw::{c_int, c_void};
-
-    #[link(name = "amdhip64")]
-    extern "C" {
-        pub fn hipGetDeviceCount(count: *mut c_int) -> c_int;
-        pub fn hipSetDevice(device: c_int) -> c_int;
-        pub fn hipGetDevice(device: *mut c_int) -> c_int;
-        pub fn hipMalloc(ptr: *mut *mut c_void, size: usize) -> c_int;
-        pub fn hipFree(ptr: *mut c_void) -> c_int;
-        pub fn hipMemcpy(
-            dst: *mut c_void,
-            src: *const c_void,
-            size: usize,
-            kind: HipMemcpyKind,
-        ) -> c_int;
-        pub fn hipMemcpyAsync(
-            dst: *mut c_void,
-            src: *const c_void,
-            size: usize,
-            kind: HipMemcpyKind,
-            stream: *mut c_void,
-        ) -> c_int;
-        pub fn hipDeviceSynchronize() -> c_int;
-        pub fn hipStreamCreate(stream: *mut *mut c_void) -> c_int;
-        pub fn hipStreamDestroy(stream: *mut c_void) -> c_int;
-        pub fn hipStreamSynchronize(stream: *mut c_void) -> c_int;
-        pub fn hipMemset(ptr: *mut c_void, value: c_int, count: usize) -> c_int;
-        pub fn hipGetDeviceProperties(prop: *mut HipDeviceProperties, device: c_int) -> c_int;
-    }
+    use std::sync::OnceLock;
 
     #[repr(C)]
     pub struct HipDeviceProperties {
@@ -232,16 +205,6 @@ mod hip_ffi {
         // Additional fields omitted for brevity
         _padding: [u8; 512],
     }
-}
-
-// =============================================================================
-// rocBLAS FFI
-// =============================================================================
-
-#[cfg(feature = "rocm")]
-#[allow(dead_code)]
-mod rocblas_ffi {
-    use std::os::raw::{c_int, c_void};
 
     pub type RocblasHandle = *mut c_void;
 
@@ -253,43 +216,181 @@ mod rocblas_ffi {
         ConjugateTranspose = 113,
     }
 
-    #[link(name = "rocblas")]
-    extern "C" {
-        pub fn rocblas_create_handle(handle: *mut RocblasHandle) -> c_int;
-        pub fn rocblas_destroy_handle(handle: RocblasHandle) -> c_int;
-        pub fn rocblas_set_stream(handle: RocblasHandle, stream: *mut c_void) -> c_int;
+    /// Holds dynamically-loaded HIP and rocBLAS libraries and their function pointers.
+    pub struct RocmLibs {
+        _hip_lib: libloading::Library,
+        _rocblas_lib: libloading::Library,
+        // HIP functions
+        pub hipGetDeviceCount: unsafe extern "C" fn(*mut c_int) -> c_int,
+        pub hipSetDevice: unsafe extern "C" fn(c_int) -> c_int,
+        pub hipMalloc: unsafe extern "C" fn(*mut *mut c_void, usize) -> c_int,
+        pub hipFree: unsafe extern "C" fn(*mut c_void) -> c_int,
+        pub hipMemcpy:
+            unsafe extern "C" fn(*mut c_void, *const c_void, usize, HipMemcpyKind) -> c_int,
+        pub hipDeviceSynchronize: unsafe extern "C" fn() -> c_int,
+        pub hipStreamCreate: unsafe extern "C" fn(*mut *mut c_void) -> c_int,
+        pub hipStreamDestroy: unsafe extern "C" fn(*mut c_void) -> c_int,
+        pub hipMemset: unsafe extern "C" fn(*mut c_void, c_int, usize) -> c_int,
+        pub hipGetDeviceProperties: unsafe extern "C" fn(*mut HipDeviceProperties, c_int) -> c_int,
+        // rocBLAS functions
+        pub rocblas_create_handle: unsafe extern "C" fn(*mut RocblasHandle) -> c_int,
+        pub rocblas_destroy_handle: unsafe extern "C" fn(RocblasHandle) -> c_int,
+        pub rocblas_set_stream: unsafe extern "C" fn(RocblasHandle, *mut c_void) -> c_int,
+        pub rocblas_sgemv: unsafe extern "C" fn(
+            RocblasHandle,
+            RocblasOperation,
+            c_int,
+            c_int,
+            *const f32,
+            *const f32,
+            c_int,
+            *const f32,
+            c_int,
+            *const f32,
+            *mut f32,
+            c_int,
+        ) -> c_int,
+        pub rocblas_sgemm: unsafe extern "C" fn(
+            RocblasHandle,
+            RocblasOperation,
+            RocblasOperation,
+            c_int,
+            c_int,
+            c_int,
+            *const f32,
+            *const f32,
+            c_int,
+            *const f32,
+            c_int,
+            *const f32,
+            *mut f32,
+            c_int,
+        ) -> c_int,
+    }
 
-        pub fn rocblas_sgemv(
-            handle: RocblasHandle,
-            trans: RocblasOperation,
-            m: c_int,
-            n: c_int,
-            alpha: *const f32,
-            A: *const f32,
-            lda: c_int,
-            x: *const f32,
-            incx: c_int,
-            beta: *const f32,
-            y: *mut f32,
-            incy: c_int,
-        ) -> c_int;
+    // Safety: The libraries are loaded once and function pointers remain valid for 'static.
+    unsafe impl Send for RocmLibs {}
+    unsafe impl Sync for RocmLibs {}
 
-        pub fn rocblas_sgemm(
-            handle: RocblasHandle,
-            transA: RocblasOperation,
-            transB: RocblasOperation,
-            m: c_int,
-            n: c_int,
-            k: c_int,
-            alpha: *const f32,
-            A: *const f32,
-            lda: c_int,
-            B: *const f32,
-            ldb: c_int,
-            beta: *const f32,
-            C: *mut f32,
-            ldc: c_int,
-        ) -> c_int;
+    impl RocmLibs {
+        fn load() -> Result<Self, libloading::Error> {
+            unsafe {
+                #[cfg(target_os = "windows")]
+                let hip_lib = libloading::Library::new("amdhip64.dll")?;
+                #[cfg(not(target_os = "windows"))]
+                let hip_lib = libloading::Library::new("libamdhip64.so")?;
+
+                #[cfg(target_os = "windows")]
+                let rocblas_lib = libloading::Library::new("rocblas.dll")?;
+                #[cfg(not(target_os = "windows"))]
+                let rocblas_lib = libloading::Library::new("librocblas.so")?;
+
+                // Load HIP function pointers
+                let f_hipGetDeviceCount = *hip_lib
+                    .get::<unsafe extern "C" fn(*mut c_int) -> c_int>(b"hipGetDeviceCount")?;
+                let f_hipSetDevice =
+                    *hip_lib.get::<unsafe extern "C" fn(c_int) -> c_int>(b"hipSetDevice")?;
+                let f_hipMalloc = *hip_lib
+                    .get::<unsafe extern "C" fn(*mut *mut c_void, usize) -> c_int>(b"hipMalloc")?;
+                let f_hipFree =
+                    *hip_lib.get::<unsafe extern "C" fn(*mut c_void) -> c_int>(b"hipFree")?;
+                let f_hipMemcpy = *hip_lib.get::<unsafe extern "C" fn(
+                    *mut c_void,
+                    *const c_void,
+                    usize,
+                    HipMemcpyKind,
+                ) -> c_int>(b"hipMemcpy")?;
+                let f_hipDeviceSynchronize =
+                    *hip_lib.get::<unsafe extern "C" fn() -> c_int>(b"hipDeviceSynchronize")?;
+                let f_hipStreamCreate = *hip_lib
+                    .get::<unsafe extern "C" fn(*mut *mut c_void) -> c_int>(b"hipStreamCreate")?;
+                let f_hipStreamDestroy = *hip_lib
+                    .get::<unsafe extern "C" fn(*mut c_void) -> c_int>(b"hipStreamDestroy")?;
+                let f_hipMemset =
+                    *hip_lib.get::<unsafe extern "C" fn(*mut c_void, c_int, usize) -> c_int>(
+                        b"hipMemset",
+                    )?;
+                let f_hipGetDeviceProperties =
+                    *hip_lib
+                        .get::<unsafe extern "C" fn(*mut HipDeviceProperties, c_int) -> c_int>(
+                            b"hipGetDeviceProperties",
+                        )?;
+
+                // Load rocBLAS function pointers
+                let f_rocblas_create_handle =
+                    *rocblas_lib.get::<unsafe extern "C" fn(*mut RocblasHandle) -> c_int>(
+                        b"rocblas_create_handle",
+                    )?;
+                let f_rocblas_destroy_handle =
+                    *rocblas_lib.get::<unsafe extern "C" fn(RocblasHandle) -> c_int>(
+                        b"rocblas_destroy_handle",
+                    )?;
+                let f_rocblas_set_stream =
+                    *rocblas_lib.get::<unsafe extern "C" fn(RocblasHandle, *mut c_void) -> c_int>(
+                        b"rocblas_set_stream",
+                    )?;
+                let f_rocblas_sgemv = *rocblas_lib.get::<unsafe extern "C" fn(
+                    RocblasHandle,
+                    RocblasOperation,
+                    c_int,
+                    c_int,
+                    *const f32,
+                    *const f32,
+                    c_int,
+                    *const f32,
+                    c_int,
+                    *const f32,
+                    *mut f32,
+                    c_int,
+                ) -> c_int>(b"rocblas_sgemv")?;
+                let f_rocblas_sgemm = *rocblas_lib.get::<unsafe extern "C" fn(
+                    RocblasHandle,
+                    RocblasOperation,
+                    RocblasOperation,
+                    c_int,
+                    c_int,
+                    c_int,
+                    *const f32,
+                    *const f32,
+                    c_int,
+                    *const f32,
+                    c_int,
+                    *const f32,
+                    *mut f32,
+                    c_int,
+                ) -> c_int>(b"rocblas_sgemm")?;
+
+                Ok(Self {
+                    _hip_lib: hip_lib,
+                    _rocblas_lib: rocblas_lib,
+                    hipGetDeviceCount: f_hipGetDeviceCount,
+                    hipSetDevice: f_hipSetDevice,
+                    hipMalloc: f_hipMalloc,
+                    hipFree: f_hipFree,
+                    hipMemcpy: f_hipMemcpy,
+                    hipDeviceSynchronize: f_hipDeviceSynchronize,
+                    hipStreamCreate: f_hipStreamCreate,
+                    hipStreamDestroy: f_hipStreamDestroy,
+                    hipMemset: f_hipMemset,
+                    hipGetDeviceProperties: f_hipGetDeviceProperties,
+                    rocblas_create_handle: f_rocblas_create_handle,
+                    rocblas_destroy_handle: f_rocblas_destroy_handle,
+                    rocblas_set_stream: f_rocblas_set_stream,
+                    rocblas_sgemv: f_rocblas_sgemv,
+                    rocblas_sgemm: f_rocblas_sgemm,
+                })
+            }
+        }
+    }
+
+    static ROCM_LIBS: OnceLock<Result<RocmLibs, String>> = OnceLock::new();
+
+    /// Get the loaded ROCm libraries, or None if they couldn't be loaded.
+    pub fn libs() -> Option<&'static RocmLibs> {
+        ROCM_LIBS
+            .get_or_init(|| RocmLibs::load().map_err(|e| e.to_string()))
+            .as_ref()
+            .ok()
     }
 }
 
@@ -320,7 +421,7 @@ pub struct RocmBackend {
 }
 
 #[cfg(feature = "rocm")]
-struct RocblasHandle(rocblas_ffi::RocblasHandle);
+struct RocblasHandle(rocm_ffi::RocblasHandle);
 
 #[cfg(feature = "rocm")]
 unsafe impl Send for RocblasHandle {}
@@ -361,10 +462,14 @@ impl RocmBackend {
     pub fn device_count() -> usize {
         #[cfg(feature = "rocm")]
         {
-            let mut count: std::os::raw::c_int = 0;
-            let result = unsafe { hip_ffi::hipGetDeviceCount(&mut count) };
-            if result == 0 {
-                count as usize
+            if let Some(libs) = rocm_ffi::libs() {
+                let mut count: std::os::raw::c_int = 0;
+                let result = unsafe { (libs.hipGetDeviceCount)(&mut count) };
+                if result == 0 {
+                    count as usize
+                } else {
+                    0
+                }
             } else {
                 0
             }
@@ -385,8 +490,12 @@ impl RocmBackend {
     pub fn with_device(device_index: usize) -> anyhow::Result<Self> {
         use std::os::raw::c_int;
 
+        let libs = rocm_ffi::libs().ok_or_else(|| {
+            anyhow::anyhow!("Failed to load ROCm libraries (libamdhip64 / librocblas)")
+        })?;
+
         // Set the device
-        let result = unsafe { hip_ffi::hipSetDevice(device_index as c_int) };
+        let result = unsafe { (libs.hipSetDevice)(device_index as c_int) };
         if result != 0 {
             return Err(anyhow::anyhow!(
                 "Failed to set HIP device {}: error {}",
@@ -396,9 +505,9 @@ impl RocmBackend {
         }
 
         // Get device properties
-        let mut props = std::mem::MaybeUninit::<hip_ffi::HipDeviceProperties>::uninit();
+        let mut props = std::mem::MaybeUninit::<rocm_ffi::HipDeviceProperties>::uninit();
         let result =
-            unsafe { hip_ffi::hipGetDeviceProperties(props.as_mut_ptr(), device_index as c_int) };
+            unsafe { (libs.hipGetDeviceProperties)(props.as_mut_ptr(), device_index as c_int) };
         let device_name = if result == 0 {
             let props = unsafe { props.assume_init() };
             let name_bytes: Vec<u8> = props
@@ -413,8 +522,8 @@ impl RocmBackend {
         };
 
         // Create rocBLAS handle
-        let mut rocblas_handle: rocblas_ffi::RocblasHandle = std::ptr::null_mut();
-        let result = unsafe { rocblas_ffi::rocblas_create_handle(&mut rocblas_handle) };
+        let mut rocblas_handle: rocm_ffi::RocblasHandle = std::ptr::null_mut();
+        let result = unsafe { (libs.rocblas_create_handle)(&mut rocblas_handle) };
         if result != 0 {
             return Err(anyhow::anyhow!(
                 "Failed to create rocBLAS handle: error {}",
@@ -424,9 +533,9 @@ impl RocmBackend {
 
         // Create HIP stream
         let mut stream: *mut std::ffi::c_void = std::ptr::null_mut();
-        let result = unsafe { hip_ffi::hipStreamCreate(&mut stream) };
+        let result = unsafe { (libs.hipStreamCreate)(&mut stream) };
         if result != 0 {
-            unsafe { rocblas_ffi::rocblas_destroy_handle(rocblas_handle) };
+            unsafe { (libs.rocblas_destroy_handle)(rocblas_handle) };
             return Err(anyhow::anyhow!(
                 "Failed to create HIP stream: error {}",
                 result
@@ -434,11 +543,11 @@ impl RocmBackend {
         }
 
         // Set rocBLAS to use our stream
-        let result = unsafe { rocblas_ffi::rocblas_set_stream(rocblas_handle, stream) };
+        let result = unsafe { (libs.rocblas_set_stream)(rocblas_handle, stream) };
         if result != 0 {
             unsafe {
-                hip_ffi::hipStreamDestroy(stream);
-                rocblas_ffi::rocblas_destroy_handle(rocblas_handle);
+                (libs.hipStreamDestroy)(stream);
+                (libs.rocblas_destroy_handle)(rocblas_handle);
             }
             return Err(anyhow::anyhow!(
                 "Failed to set rocBLAS stream: error {}",
@@ -519,11 +628,12 @@ impl RocmBackend {
     fn alloc_and_copy(&self, data: &[f32]) -> anyhow::Result<HipSlice<f32>> {
         use std::os::raw::c_void;
 
+        let libs = rocm_ffi::libs().ok_or_else(|| anyhow::anyhow!("ROCm libraries not loaded"))?;
         let size = data.len() * std::mem::size_of::<f32>();
 
         // Allocate device memory
         let mut device_ptr: *mut c_void = std::ptr::null_mut();
-        let result = unsafe { hip_ffi::hipMalloc(&mut device_ptr, size) };
+        let result = unsafe { (libs.hipMalloc)(&mut device_ptr, size) };
         if result != 0 {
             return Err(anyhow::anyhow!(
                 "Failed to allocate GPU memory: error {}",
@@ -533,7 +643,7 @@ impl RocmBackend {
 
         // Copy data to device
         let result = unsafe {
-            hip_ffi::hipMemcpy(
+            (libs.hipMemcpy)(
                 device_ptr,
                 data.as_ptr() as *const c_void,
                 size,
@@ -541,7 +651,7 @@ impl RocmBackend {
             )
         };
         if result != 0 {
-            unsafe { hip_ffi::hipFree(device_ptr) };
+            unsafe { (libs.hipFree)(device_ptr) };
             return Err(anyhow::anyhow!(
                 "Failed to copy data to GPU: error {}",
                 result
@@ -556,9 +666,10 @@ impl RocmBackend {
     fn copy_to_host(&self, src: &HipSlice<f32>, dst: &mut [f32]) -> anyhow::Result<()> {
         use std::os::raw::c_void;
 
+        let libs = rocm_ffi::libs().ok_or_else(|| anyhow::anyhow!("ROCm libraries not loaded"))?;
         let size = dst.len() * std::mem::size_of::<f32>();
         let result = unsafe {
-            hip_ffi::hipMemcpy(
+            (libs.hipMemcpy)(
                 dst.as_mut_ptr() as *mut c_void,
                 src.as_ptr() as *const c_void,
                 size,
@@ -587,11 +698,12 @@ impl RocmBackend {
     pub fn alloc_zeros(&self, len: usize) -> anyhow::Result<HipSlice<f32>> {
         use std::os::raw::c_void;
 
+        let libs = rocm_ffi::libs().ok_or_else(|| anyhow::anyhow!("ROCm libraries not loaded"))?;
         let size = len * std::mem::size_of::<f32>();
 
         // Allocate device memory
         let mut device_ptr: *mut c_void = std::ptr::null_mut();
-        let result = unsafe { hip_ffi::hipMalloc(&mut device_ptr, size) };
+        let result = unsafe { (libs.hipMalloc)(&mut device_ptr, size) };
         if result != 0 {
             return Err(anyhow::anyhow!(
                 "Failed to allocate GPU memory: error {}",
@@ -600,9 +712,9 @@ impl RocmBackend {
         }
 
         // Zero the memory
-        let result = unsafe { hip_ffi::hipMemset(device_ptr, 0, size) };
+        let result = unsafe { (libs.hipMemset)(device_ptr, 0, size) };
         if result != 0 {
-            unsafe { hip_ffi::hipFree(device_ptr) };
+            unsafe { (libs.hipFree)(device_ptr) };
             return Err(anyhow::anyhow!(
                 "Failed to zero GPU memory: error {}",
                 result
@@ -615,7 +727,8 @@ impl RocmBackend {
     /// Synchronize the device (wait for all operations to complete).
     #[cfg(feature = "rocm")]
     pub fn synchronize(&self) -> anyhow::Result<()> {
-        let result = unsafe { hip_ffi::hipDeviceSynchronize() };
+        let libs = rocm_ffi::libs().ok_or_else(|| anyhow::anyhow!("ROCm libraries not loaded"))?;
+        let result = unsafe { (libs.hipDeviceSynchronize)() };
         if result != 0 {
             return Err(anyhow::anyhow!(
                 "Failed to synchronize device: error {}",
@@ -639,15 +752,16 @@ impl RocmBackend {
         rows: usize,
         cols: usize,
     ) -> anyhow::Result<()> {
+        let libs = rocm_ffi::libs().ok_or_else(|| anyhow::anyhow!("ROCm libraries not loaded"))?;
         let alpha: f32 = 1.0;
         let beta: f32 = 0.0;
 
         // rocBLAS uses column-major, our arrays are row-major
         // For row-major A @ x, we compute A^T @ x in column-major
         let result = unsafe {
-            rocblas_ffi::rocblas_sgemv(
+            (libs.rocblas_sgemv)(
                 self.rocblas_handle.0,
-                rocblas_ffi::RocblasOperation::Transpose,
+                rocm_ffi::RocblasOperation::Transpose,
                 cols as i32, // rows of A^T = cols of A
                 rows as i32, // cols of A^T = rows of A
                 &alpha,
@@ -678,15 +792,16 @@ impl RocmBackend {
         n: usize,
         k: usize,
     ) -> anyhow::Result<()> {
+        let libs = rocm_ffi::libs().ok_or_else(|| anyhow::anyhow!("ROCm libraries not loaded"))?;
         let alpha: f32 = 1.0;
         let beta: f32 = 0.0;
 
         // For row-major matrices, we compute C^T = B^T @ A^T in column-major
         let result = unsafe {
-            rocblas_ffi::rocblas_sgemm(
+            (libs.rocblas_sgemm)(
                 self.rocblas_handle.0,
-                rocblas_ffi::RocblasOperation::None,
-                rocblas_ffi::RocblasOperation::None,
+                rocm_ffi::RocblasOperation::None,
+                rocm_ffi::RocblasOperation::None,
                 n as i32,
                 m as i32,
                 k as i32,
@@ -842,8 +957,10 @@ impl KernelBackend for RocmBackend {
 #[cfg(feature = "rocm")]
 impl Drop for RocblasHandle {
     fn drop(&mut self) {
-        unsafe {
-            rocblas_ffi::rocblas_destroy_handle(self.0);
+        if let Some(libs) = rocm_ffi::libs() {
+            unsafe {
+                (libs.rocblas_destroy_handle)(self.0);
+            }
         }
     }
 }
@@ -851,8 +968,10 @@ impl Drop for RocblasHandle {
 #[cfg(feature = "rocm")]
 impl Drop for HipStream {
     fn drop(&mut self) {
-        unsafe {
-            hip_ffi::hipStreamDestroy(self.0);
+        if let Some(libs) = rocm_ffi::libs() {
+            unsafe {
+                (libs.hipStreamDestroy)(self.0);
+            }
         }
     }
 }

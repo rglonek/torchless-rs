@@ -1371,6 +1371,7 @@ dependencies = [
  "criterion",
  "cudarc",
  "half",
+ "libloading",
  "memmap2",
  "metal",
  "ndarray",

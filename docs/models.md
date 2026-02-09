@@ -1,8 +1,6 @@
 # Supported Models & Memory Requirements
 
-Torchless-rs supports dense transformer models in the **Mistral**, **LLaMA**, **Phi**, **Gemma**, and **Qwen** families. This page lists tested models, their specifications, and the memory needed to run them in each mode.
-
-> **MoE (Mixture-of-Experts) models are not yet supported.** This means models like Mistral Large 3, LLaMA 4 Scout/Maverick, and DeepSeek V3 cannot be loaded. See [Large-Context Reference](#large-context-reference) for details.
+Torchless-rs supports transformer models in the **Mistral**, **LLaMA**, **Phi**, **Gemma**, **Qwen**, and **DeepSeek** families -- including both dense and **Mixture-of-Experts (MoE)** architectures. This page lists tested models, their specifications, and the memory needed to run them in each mode.
 
 ---
 
@@ -130,9 +128,11 @@ These models require server-grade hardware. Torchless-rs supports them (they use
 
 ## Thinking / Reasoning Models
 
-Torchless-rs supports **distilled thinking models** that use `<think>`...`</think>` token pairs to emit chain-of-thought reasoning before their final answer. These models use the same dense architectures as their base families (Qwen, LLaMA) so they load and run without any special configuration.
+Torchless-rs supports thinking models that use `<think>`...`</think>` token pairs to emit chain-of-thought reasoning before their final answer. Both **distilled dense** variants (Qwen/LLaMA-based) and the **full MoE** models (DeepSeek-R1, DeepSeek-V3) are supported.
 
-### Supported Distilled Thinking Models
+### Distilled Thinking Models (Dense)
+
+These use the same dense architectures as their base families and run without any special configuration.
 
 | Model | Base Architecture | Parameters | Context | Notes |
 |-------|-------------------|------------|---------|-------|
@@ -143,6 +143,15 @@ Torchless-rs supports **distilled thinking models** that use `<think>`...`</thin
 | DeepSeek-R1-Distill-LLaMA-8B | LLaMA | 8.0B | 131,072 | LLaMA-based distillation |
 | DeepSeek-R1-Distill-LLaMA-70B | LLaMA | ~70.6B | 131,072 | Largest distilled variant |
 | QwQ-32B | Qwen | ~32.5B | 131,072 | Alibaba's reasoning model |
+
+### MoE Thinking Models
+
+These use the full DeepSeek MoE architecture with top-k expert routing and shared experts. Lazy loading is strongly recommended -- eager loading would require >1 TB RAM.
+
+| Model | Active / Total Params | Experts | Context | Notes |
+|-------|----------------------|---------|---------|-------|
+| DeepSeek-R1 | ~37B / ~671B | 256 routed + 1 shared, top-8 | 128,000 | Full reasoning model with MoE |
+| DeepSeek-V3 | ~37B / ~671B | 256 routed + 1 shared, top-8 | 128,000 | Base MoE model (non-thinking) |
 
 ### Thinking Model Behavior
 
@@ -163,8 +172,6 @@ Thinking display: off (traces hidden)
 
 When shown, thinking traces appear dimmed in the terminal to visually distinguish them from the final answer.
 
-> **Note:** Full DeepSeek-R1 (671B) and DeepSeek-V3 are MoE (Mixture-of-Experts) models and are **not supported**. Only the distilled dense variants listed above work with torchless-rs.
-
 ---
 
 ## Large-Context Reference
@@ -184,17 +191,18 @@ A reference table of notable open-source models with large context windows. Not 
 | Qwen 2.5 72B | ~72.7B | 131,072 | Apache 2.0 | Frontier-class open model |
 | LLaMA 3.1 70B | ~70.6B | 131,072 | Meta | Excellent for long-form tasks |
 
-### MoE Models (Not Yet Supported)
+### MoE Models
 
-These models use Mixture-of-Experts routing, which torchless-rs does not currently support.
+| Model | Active / Total Params | Context | License | Supported | Notes |
+|-------|----------------------|---------|---------|-----------|-------|
+| DeepSeek V3 | ~37B / ~671B | 128,000 | DeepSeek | Yes | 256 experts, top-8 routing |
+| DeepSeek R1 | ~37B / ~671B | 128,000 | DeepSeek | Yes | MoE + thinking |
+| Mistral Large 3 | 41B / 675B | 256,000 | Apache 2.0 | No | Different MoE architecture |
+| LLaMA 4 Scout | 17B / 109B | 10,000,000 | Meta | No | Different MoE architecture |
+| LLaMA 4 Maverick | 17B / 400B | 1,000,000 | Meta | No | Different MoE architecture |
+| Command R | 35B | 180,000 | Apache 2.0 | No | Different architecture entirely |
 
-| Model | Active / Total Params | Context | License | Notes |
-|-------|----------------------|---------|---------|-------|
-| Mistral Large 3 | 41B / 675B | 256,000 | Apache 2.0 | 16 experts, strong reasoning |
-| LLaMA 4 Scout | 17B / 109B | 10,000,000 | Meta | 16 experts, largest context window |
-| LLaMA 4 Maverick | 17B / 400B | 1,000,000 | Meta | 128 experts, multimodal |
-| DeepSeek V3 | ~37B / ~671B | 128,000 | DeepSeek | Sparse attention |
-| Command R | 35B | 180,000 | Apache 2.0 | Designed for RAG (different architecture) |
+> **Note:** MoE support currently covers the DeepSeek architecture (V3/R1). Other MoE architectures (Mistral Large, LLaMA 4) use different routing/expert layouts and are not yet supported.
 
 ---
 

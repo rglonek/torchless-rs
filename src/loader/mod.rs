@@ -44,6 +44,24 @@ pub struct Config {
     pub norm_eps: f32,
     pub act_type: String,
     pub quant: String,
+
+    // MoE (Mixture-of-Experts) configuration
+    // When n_routed_experts == 0, the model is a standard dense model.
+    /// Number of routed experts per MoE layer (0 = dense model)
+    #[serde(default)]
+    pub n_routed_experts: usize,
+    /// Number of experts activated per token (top-k routing)
+    #[serde(default)]
+    pub n_experts_per_token: usize,
+    /// Number of shared experts that always activate (DeepSeek-style)
+    #[serde(default)]
+    pub n_shared_experts: usize,
+    /// Intermediate size for MoE expert FFNs (may differ from dense intermediate_size)
+    #[serde(default)]
+    pub moe_intermediate_size: usize,
+    /// Index of the first layer that uses MoE (layers before this are dense)
+    #[serde(default)]
+    pub first_moe_layer: usize,
 }
 
 #[derive(Debug, Deserialize)]

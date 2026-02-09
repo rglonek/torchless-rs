@@ -91,6 +91,8 @@ impl ChatTemplate {
             ModelArchitecture::Phi => Some(ChatTemplate::Phi),
             ModelArchitecture::Gemma => Some(ChatTemplate::Gemma),
             ModelArchitecture::Qwen => Some(ChatTemplate::Qwen),
+            // DeepSeek uses a similar chat format to Qwen (ChatML-style)
+            ModelArchitecture::DeepSeek => Some(ChatTemplate::Qwen),
             ModelArchitecture::Unknown => None,
         }
     }

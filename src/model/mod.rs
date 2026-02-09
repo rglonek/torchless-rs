@@ -15,6 +15,9 @@ pub use modules::{
     Attention, Embedding, Layer, LazyAttention, LazyEmbedding, LazyLayer, LazyMLP, RMSNorm, MLP,
 };
 
+// MoE (Mixture-of-Experts) module exports
+pub use modules::{LazyExpert, LazyMoE, LazyMoELayer, LazyMoERouter, MoE, MoELayer, MoERouter};
+
 // =============================================================================
 // Phase 8: Multi-Architecture Support
 // =============================================================================
@@ -22,18 +25,21 @@ pub use modules::{
 // Architecture detection and configuration
 pub use architecture::{
     detect_architecture, detect_architecture_from_config, detect_architecture_from_tensors,
-    ActivationType, ArchitectureConfig, Model, ModelArchitecture, NormType, RopeScaling,
-    TensorNamePattern,
+    ActivationType, ArchitectureConfig, Model, ModelArchitecture, MoeTensorNamePattern, NormType,
+    RopeScaling, TensorNamePattern,
 };
 
 // Model implementations for different architectures
 pub use models::{
+    // DeepSeek (MoE)
+    DeepSeek,
     // Dynamic model enum for runtime polymorphism
     DynamicModel,
     // Gemma (Google)
     Gemma,
     // LLaMA (Meta)
     LLaMA,
+    LazyDeepSeek,
     LazyGemma,
     LazyLLaMA,
     LazyPhi,
@@ -161,8 +167,10 @@ impl InferenceState {
             // Pre-allocated buffer for flattened context (avoids clone in output projection)
             context_flat: Array1::zeros(config.hidden_size),
 
-            mlp_gate: Array1::zeros(config.intermediate_size),
-            mlp_up: Array1::zeros(config.intermediate_size),
+            // MLP buffers: sized to the larger of dense intermediate_size and
+            // MoE expert intermediate_size (so the same buffers work for both)
+            mlp_gate: Array1::zeros(config.intermediate_size.max(config.moe_intermediate_size)),
+            mlp_up: Array1::zeros(config.intermediate_size.max(config.moe_intermediate_size)),
 
             logits: Array1::zeros(config.vocab_size),
             probs: Array1::zeros(config.vocab_size),

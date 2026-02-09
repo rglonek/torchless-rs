@@ -33,6 +33,11 @@ fn test_config_deserialization() {
         norm_eps: metadata["norm_eps"].parse().unwrap(),
         act_type: metadata["act_type"].clone(),
         quant: metadata["quant"].clone(),
+        n_routed_experts: 0,
+        n_experts_per_token: 0,
+        n_shared_experts: 0,
+        moe_intermediate_size: 0,
+        first_moe_layer: 0,
     };
 
     assert_eq!(config.hidden_size, 4096);

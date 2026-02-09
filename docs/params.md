@@ -1,6 +1,6 @@
 # Parameter Reference
 
-This document explains the key runtime parameters for torchless and how they interact.
+This document explains the CLI flags, in-session chat commands, and coding mode for torchless.
 
 ## Parameters
 
@@ -147,6 +147,38 @@ The decoder uses adaptive speculation length (starting at 5 tokens, ranging 2-8)
 - `--top-k` and `--top-p` are ignored in speculative mode. Only temperature-based sampling is used for draft/verify.
 - Not yet compatible with two-model speculative decoding (separate draft model). The library supports this, but the CLI only exposes the self-speculative variant. See [Future Parameters](params-future.md) for details.
 
+### `--show-thinking` -- Show Reasoning Traces
+
+**Default:** Off (thinking traces hidden).
+
+For thinking models (DeepSeek-R1 distilled variants, QwQ, full DeepSeek-R1), this flag shows the `<think>`...`</think>` reasoning traces inline during generation. Traces appear dimmed in the terminal.
+
+Thinking is **auto-detected** from the model's vocabulary -- no flag is needed to *enable* thinking, only to *display* it. You can also toggle visibility at runtime with the `/thinking` chat command.
+
+### `--chat` -- Interactive Chat Mode
+
+Enters an interactive multi-turn conversation REPL. Supports `/commands` for changing settings at runtime, saving/loading sessions, coding mode, and more. See [Chat Commands](#chat-commands) below.
+
+### `--system <MSG>` -- System Prompt
+
+**Default:** None.
+
+Sets the initial system prompt for chat mode. Can be changed at runtime with `/system`.
+
+### `--debug` -- Debug Output
+
+**Default:** Off.
+
+Enables verbose debug output: token processing progress, KV cache reuse stats, speculative decoding acceptance rates, EOS detection, and more. Toggleable at runtime with `/debug`.
+
+### `--socket <PATH>` -- Unix Socket Server (Unix only)
+
+Starts a multi-user chat server listening on a Unix domain socket at `PATH`. Requires `--chat-save-root`.
+
+### `--chat-save-root <DIR>` -- Per-User Save Directory
+
+Required with `--socket`. Sets the root directory for per-user chat session saves.
+
 ## How `max-seq-len` and `max-tokens` Interact
 
 The context window must hold both the conversation history **and** the model's response:
@@ -211,4 +243,96 @@ In chat mode, `trim_to_fit` reserves `max_tokens` worth of space for generation.
 
 # Full setup: lazy loading, nucleus sampling, chat with system prompt
 ./torchless --lazy --top-p 0.95 --temperature 0.6 --chat --system "You are a coding assistant." model.bin
+
+# Thinking model with visible reasoning
+./torchless --chat --show-thinking deepseek-r1-distill-qwen-7b.gguf
 ```
+
+---
+
+## Chat Commands
+
+In `--chat` mode, type `/help` to see all commands. Commands start with `/` and are processed locally (not sent to the model). Anything else is sent as a message.
+
+### Session Control
+
+| Command | Description |
+|---------|-------------|
+| `/quit`, `/exit`, `/q` | Exit chat |
+| `/clear` | Clear conversation history and reset KV cache |
+| `/retry` | Remove the last assistant response and regenerate |
+| `/context` | Show token usage, context headroom, and conversation stats |
+| `/settings` | Show all current runtime settings |
+
+### Sampling & Generation
+
+These modify settings for the current session. Changes take effect on the next response.
+
+| Command | Description |
+|---------|-------------|
+| `/temperature <T>` | Set sampling temperature (0.0 = greedy, 1.0+ = creative) |
+| `/top-k <K\|off>` | Set or disable top-k sampling |
+| `/top-p <P\|off>` | Set or disable nucleus (top-p) sampling |
+| `/speculative` | Toggle self-speculative decoding on/off |
+| `/max-tokens <N>` | Set max tokens per response |
+| `/debug` | Toggle debug output |
+| `/system <MSG\|off>` | Set, change, or remove the system prompt (resets KV cache) |
+| `/thinking [on\|off]` | Toggle or set thinking trace visibility (thinking models only) |
+
+### Save / Load
+
+Conversations can be saved to and loaded from JSON files.
+
+| Command | Description |
+|---------|-------------|
+| `/save <file>` | Save conversation history to a JSON file |
+| `/fullsave <file>` | Save conversation history **and** current settings (temperature, top-k, etc.) |
+| `/load <file>` | Load a conversation (and optional settings) from a JSON file |
+
+### Coding Mode
+
+Coding mode enables structured file-edit proposals from the model. When active, the model uses SEARCH/REPLACE blocks to propose changes, and you review/apply them interactively.
+
+| Command | Description |
+|---------|-------------|
+| `/code [on\|off]` | Toggle coding mode (appends coding instructions to system prompt, resets KV cache) |
+| `/diff` | Show all pending file edits proposed by the model |
+| `/apply [all\|N]` | Apply pending edits to files (prompts for confirmation per edit) |
+| `/discard [all\|N]` | Discard pending edits without applying |
+
+**How coding mode works:**
+
+1. Enable with `/code on` (or `/code` to toggle).
+2. Reference files in your messages using `@filepath` syntax (e.g., `@src/main.rs` or `@src/main.rs:10-50` for a line range). The file contents are expanded inline before sending to the model.
+3. The model proposes changes as SEARCH/REPLACE blocks.
+4. Review with `/diff`, then apply with `/apply` (each edit requires `y/N` confirmation) or discard with `/discard`.
+
+```
+> /code on
+Coding mode: on. Use @file references and the model will propose edits. KV cache reset.
+
+> Fix the off-by-one error in @src/parser.rs:42-60
+[1 edit(s) proposed. Use /diff to review, /apply to apply.]
+
+> /diff
+Edit 1: src/parser.rs
+--- SEARCH ---
+    if index >= items.len() {
+--- REPLACE ---
+    if index > items.len() {
+
+> /apply
+Apply edit 1/1? [y/N]: y
+Applied.
+```
+
+### `@file` References
+
+You can use `@filepath` in any message (not just coding mode) to include file contents in your prompt. Supported formats:
+
+| Syntax | Effect |
+|--------|--------|
+| `@path/to/file` | Include the entire file |
+| `@path/to/file:10-50` | Include lines 10 through 50 |
+
+File paths are resolved relative to the current working directory.

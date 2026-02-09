@@ -6,7 +6,10 @@ A Rust implementation of [Torchless](https://github.com/ryanssenn/torchless) —
 
 ## Features
 
-- **Multi-Architecture Support** — Mistral, LLaMA, Phi, Gemma, Qwen
+- **Multi-Architecture Support** — Mistral, LLaMA, Phi, Gemma, Qwen, DeepSeek (MoE)
+- **Mixture-of-Experts** — Full MoE support with top-k routing and shared experts (DeepSeek-V3, R1)
+- **Thinking Models** — Auto-detected `<think>`/`</think>` reasoning traces (DeepSeek-R1, QwQ, distilled variants)
+- **Coding Mode** — Structured SEARCH/REPLACE edit proposals with `@file` references, diff review, and apply
 - **GPU Acceleration** — CUDA (NVIDIA), ROCm (AMD), Metal (Apple), OpenCL
 - **Quantization** — FP32, FP16, INT8, INT4 (Q4_0, Q4_K_M)
 - **Model Formats** — GGUF, Safetensors, native binary
@@ -58,7 +61,7 @@ GPU backends are compiled in but only initialized when selected via `--backend`.
 ## Usage
 
 ```bash
-./target/release/torchless [OPTIONS] <model_path> "<prompt>"
+./target/release/torchless [OPTIONS] <model_path> [prompt]
 
 # Basic usage
 ./target/release/torchless model.bin "The quick brown fox"
@@ -67,9 +70,11 @@ GPU backends are compiled in but only initialized when selected via `--backend`.
 ./target/release/torchless --chat model.bin
 ./target/release/torchless --chat --system "You are a helpful assistant." model.bin
 
+# Thinking model with visible reasoning traces
+./target/release/torchless --chat --show-thinking deepseek-r1-distill.gguf
+
 # Select GPU backend at runtime
 ./target/release/torchless --backend cuda model.bin "Hello"
-./target/release/torchless --backend opencl model.bin "Hello"
 ./target/release/torchless --backend auto model.bin "Hello"  # auto-select best
 
 # List available backends
@@ -79,7 +84,7 @@ GPU backends are compiled in but only initialized when selected via `--backend`.
 ./target/release/torchless --max-tokens 100 --temperature 0.7 model.bin "Once upon"
 ```
 
-See [Parameter Reference](docs/params.md) for details on `--max-seq-len`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--lazy`, and `--speculative`.
+See [Parameter Reference](docs/params.md) for all CLI flags and [Chat Commands](docs/params.md#chat-commands) for in-session `/commands`.
 
 ## Performance
 
@@ -97,7 +102,8 @@ See [Supported Models & Memory](docs/models.md) for per-model memory requirement
 | Topic | Description |
 |-------|-------------|
 | [Getting Started](docs/getting-started.md) | Installation and first steps |
-| [Supported Models](docs/models.md) | Model list, memory requirements, recommendations |
+| [Supported Models](docs/models.md) | Model list, MoE support, memory requirements |
+| [Parameters & Commands](docs/params.md) | CLI flags, chat commands, coding mode |
 | [Library API](docs/library.md) | Using as a Rust library |
 | [Development](docs/development.md) | Testing and contributing |
 
@@ -130,7 +136,7 @@ See [Supported Models & Memory](docs/models.md) for per-model memory requirement
 ### Reference
 | Topic | Description |
 |-------|-------------|
-| [Parameters](docs/params.md) | `--max-seq-len`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--lazy`, `--speculative` |
+| [Parameters & Commands](docs/params.md) | CLI flags, chat `/commands`, coding mode |
 | [Future Parameters](docs/params-future.md) | Library configs not yet exposed via CLI |
 | [Model Formats](docs/formats/model-formats.md) | GGUF, Safetensors loading |
 | [Implementation](docs/implementation.md) | Technical internals |

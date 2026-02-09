@@ -781,6 +781,121 @@ pub fn estimate_inference_memory(
     }
 }
 
+/// Estimate GPU memory needed for a Mixture-of-Experts model.
+///
+/// MoE models have two types of layers:
+/// - Dense layers (first_moe_layer layers): standard attention + MLP
+/// - MoE layers (remaining layers): attention + router + N experts + optional shared experts
+///
+/// This returns the TOTAL parameter memory (all experts loaded).
+/// For lazy/memory-mapped inference, actual RAM usage is much lower since
+/// only the top-k experts are accessed per token.
+///
+/// # Arguments
+/// * `hidden_size` - Model hidden dimension
+/// * `intermediate_size` - Dense MLP intermediate dimension
+/// * `moe_intermediate_size` - Expert FFN intermediate dimension
+/// * `n_layers` - Total number of transformer layers
+/// * `first_moe_layer` - Index of first MoE layer (layers before are dense)
+/// * `n_routed_experts` - Number of routed experts per MoE layer
+/// * `n_shared_experts` - Number of shared experts per MoE layer
+/// * `vocab_size` - Vocabulary size
+/// * `n_heads` - Number of attention heads
+/// * `n_kv_heads` - Number of KV heads (for GQA)
+/// * `dtype_bytes` - Bytes per element (4 for f32, 2 for f16)
+#[allow(clippy::too_many_arguments)]
+pub fn estimate_moe_model_memory(
+    hidden_size: usize,
+    intermediate_size: usize,
+    moe_intermediate_size: usize,
+    n_layers: usize,
+    first_moe_layer: usize,
+    n_routed_experts: usize,
+    n_shared_experts: usize,
+    vocab_size: usize,
+    n_heads: usize,
+    n_kv_heads: usize,
+    dtype_bytes: usize,
+) -> MoEMemoryEstimate {
+    let head_dim = hidden_size / n_heads;
+
+    // Attention weights (same for all layers)
+    let q_proj = hidden_size * hidden_size;
+    let k_proj = hidden_size * (n_kv_heads * head_dim);
+    let v_proj = hidden_size * (n_kv_heads * head_dim);
+    let o_proj = hidden_size * hidden_size;
+    let attn_params = q_proj + k_proj + v_proj + o_proj;
+    let norm_params = hidden_size * 2; // input_norm + post_attention_norm
+
+    // Dense layer MLP weights
+    let dense_mlp_params = hidden_size * intermediate_size * 3; // gate + up + down
+
+    // MoE layer weights
+    let router_params = n_routed_experts * hidden_size; // gate weight
+    let expert_params = moe_intermediate_size * hidden_size * 3; // per expert: gate + up + down
+    let total_expert_params = expert_params * n_routed_experts;
+    let shared_expert_params = if n_shared_experts > 0 {
+        moe_intermediate_size * hidden_size * 3 * n_shared_experts
+    } else {
+        0
+    };
+    let moe_layer_params = router_params + total_expert_params + shared_expert_params;
+
+    // Per-layer totals
+    let dense_layer_params = attn_params + dense_mlp_params + norm_params;
+    let moe_layer_total_params = attn_params + moe_layer_params + norm_params;
+
+    let n_dense_layers = first_moe_layer;
+    let n_moe_layers = n_layers - first_moe_layer;
+
+    let total_dense_params = dense_layer_params * n_dense_layers;
+    let total_moe_params = moe_layer_total_params * n_moe_layers;
+
+    // Embedding and output
+    let embedding = vocab_size * hidden_size;
+    let output = vocab_size * hidden_size;
+    let final_norm = hidden_size;
+
+    let total_params = total_dense_params + total_moe_params + embedding + output + final_norm;
+
+    // Active parameters per token (only top-k experts per MoE layer)
+    // This is useful for understanding computational cost
+    let n_experts_per_token = if n_routed_experts > 0 { 8 } else { 0 }; // default top-k
+    let active_expert_params = expert_params * n_experts_per_token + shared_expert_params;
+    let active_moe_layer_params = attn_params + router_params + active_expert_params + norm_params;
+    let active_params = total_dense_params
+        + active_moe_layer_params * n_moe_layers
+        + embedding
+        + output
+        + final_norm;
+
+    MoEMemoryEstimate {
+        total_bytes: total_params * dtype_bytes,
+        active_bytes: active_params * dtype_bytes,
+        total_params,
+        active_params,
+        n_dense_layers,
+        n_moe_layers,
+    }
+}
+
+/// Memory estimate breakdown for MoE models.
+#[derive(Debug, Clone)]
+pub struct MoEMemoryEstimate {
+    /// Total memory for ALL model weights (all experts)
+    pub total_bytes: usize,
+    /// Memory for active parameters per token (only top-k experts)
+    pub active_bytes: usize,
+    /// Total parameter count
+    pub total_params: usize,
+    /// Active parameter count per token
+    pub active_params: usize,
+    /// Number of dense layers
+    pub n_dense_layers: usize,
+    /// Number of MoE layers
+    pub n_moe_layers: usize,
+}
+
 /// Memory estimate breakdown for inference.
 #[derive(Debug, Clone)]
 pub struct InferenceMemoryEstimate {

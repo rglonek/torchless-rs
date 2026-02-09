@@ -768,6 +768,29 @@ pub fn parse_hf_config(config: &Value) -> UnifiedConfig {
             }
         }
 
+        // MoE (Mixture-of-Experts) config
+        // DeepSeek-style: n_routed_experts, num_experts_per_tok, n_shared_experts
+        // Mixtral-style: num_local_experts, num_experts_per_tok
+        if let Some(v) = obj
+            .get("n_routed_experts")
+            .or_else(|| obj.get("num_local_experts"))
+            .and_then(|v| v.as_u64())
+        {
+            unified.n_routed_experts = Some(v as usize);
+        }
+        if let Some(v) = obj.get("num_experts_per_tok").and_then(|v| v.as_u64()) {
+            unified.n_experts_per_token = Some(v as usize);
+        }
+        if let Some(v) = obj.get("n_shared_experts").and_then(|v| v.as_u64()) {
+            unified.n_shared_experts = Some(v as usize);
+        }
+        if let Some(v) = obj.get("moe_intermediate_size").and_then(|v| v.as_u64()) {
+            unified.moe_intermediate_size = Some(v as usize);
+        }
+        if let Some(v) = obj.get("first_k_dense_replace").and_then(|v| v.as_u64()) {
+            unified.first_moe_layer = Some(v as usize);
+        }
+
         // Store original config keys as metadata
         for (key, value) in obj {
             if let Some(s) = value.as_str() {

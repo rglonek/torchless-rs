@@ -16,6 +16,11 @@ fn test_config() -> Config {
         norm_eps: 1e-5,
         act_type: "silu".to_string(),
         quant: "f32".to_string(),
+        n_routed_experts: 0,
+        n_experts_per_token: 0,
+        n_shared_experts: 0,
+        moe_intermediate_size: 0,
+        first_moe_layer: 0,
     }
 }
 

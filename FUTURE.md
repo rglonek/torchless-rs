@@ -40,47 +40,6 @@ Add WebGPU support for cross-platform GPU acceleration.
 
 ---
 
-## Mixture-of-Experts (MoE) Architecture
-
-### 🔴 MoE Model Support for Full DeepSeek-R1 / V3
-
-Add Mixture-of-Experts architecture support to unlock full-size reasoning models like DeepSeek-R1 (671B), DeepSeek-V3, and Mistral Large 3.
-
-Currently, only **distilled** thinking models are supported (e.g., DeepSeek-R1-Distill-Qwen-7B) because they use standard dense architectures. The full MoE models require a fundamentally different forward pass with expert routing.
-
-**Benefits:**
-- Run DeepSeek-R1 (671B) -- one of the strongest open reasoning models
-- Run DeepSeek-V3 -- frontier-class open model
-- Run Mistral Large 3 (675B) -- strong multilingual reasoning
-- Only a fraction of parameters are active per token (e.g., 37B of 671B), making MoE models more efficient per-FLOP than equivalent dense models
-
-**Implementation needed:**
-- [ ] Add `MoE` variant to `ModelArchitecture` enum
-- [ ] Implement expert gating / router module (top-k routing with learned gate weights)
-- [ ] Implement sparse FFN layer (select top-k experts per token, run only those FFNs)
-- [ ] Add load balancing loss tracking (for monitoring routing quality)
-- [ ] Support shared experts (DeepSeek uses 1 shared + N routed experts)
-- [ ] Add MoE-aware memory estimation (active params vs total params)
-- [ ] Handle MoE tensor naming patterns in architecture detection
-- [ ] Add lazy loading support for MoE (critical -- loading all experts eagerly would require >1TB RAM)
-- [ ] Add tests with small synthetic MoE model
-
-**Key models this would unlock:**
-
-| Model | Active / Total Params | Experts | Context | Notes |
-|-------|----------------------|---------|---------|-------|
-| DeepSeek-R1 | ~37B / ~671B | 8 of 256 | 128,000 | Thinking model with MoE |
-| DeepSeek-V3 | ~37B / ~671B | 8 of 256 | 128,000 | General-purpose MoE |
-| Mistral Large 3 | 41B / 675B | top-2 of 16 | 256,000 | Strong reasoning |
-| LLaMA 4 Scout | 17B / 109B | top-1 of 16 | 10,000,000 | Largest context window |
-| LLaMA 4 Maverick | 17B / 400B | top-1 of 128 | 1,000,000 | Multimodal |
-
-**Reference:** DeepSeek-V3 technical report describes the MoE routing mechanism in detail.
-
-**Estimated effort:** Large - new architecture type with significant changes to forward pass, memory management, and tensor loading.
-
----
-
 ## Deferred Chat Session Commands
 
 These in-session commands require significant architectural changes and are deferred for future implementation.
@@ -124,38 +83,10 @@ Switch between chat templates (Mistral/LLaMA/Phi/Gemma/Qwen) mid-session.
 
 ---
 
-## Coding Mode -- File Reading and Editing
-
-### 🟡 `@filename` File Context and Editing
-
-Add an interactive coding mode where the user can reference local files using `@filename` syntax, allowing torchless to read file contents into context and suggest or apply modifications.
-
-**Benefits:**
-- Enable code-assistant workflows directly in the terminal
-- Users can reference files in prompts (e.g., `@src/main.rs fix the bug on line 42`)
-- Model can read file contents, reason about them, and propose edits
-- Lightweight alternative to full IDE-integrated AI coding tools
-
-**Implementation needed:**
-- [ ] Parse `@filepath` references in user input and resolve to absolute paths
-- [ ] Read referenced files and inject contents into the prompt context
-- [ ] Add `/edit` or `/code` command to toggle coding mode
-- [ ] Implement structured output parsing for model-proposed edits (e.g., search/replace blocks)
-- [ ] Apply edits to files on disk (with user confirmation)
-- [ ] Handle large files (truncation, line-range selection like `@file:10-50`)
-- [ ] Add `/diff` command to show pending changes before applying
-- [ ] Respect `.gitignore` and prevent reading sensitive files
-
-**Estimated effort:** Medium - requires prompt engineering, file I/O, and a lightweight edit-application layer.
-
----
-
 ## Summary
 
 | Item | Priority | Status |
 |------|----------|--------|
-| MoE Architecture | 🔴 High | Not started |
-| Coding Mode (`@filename`) | 🟡 Medium | Not started |
 | WebGPU Backend | 🟢 Low | Not started |
 | `/lazy` command | 🟡 Medium | Not started |
 | `/model` command | 🟡 Medium | Not started |

@@ -161,7 +161,7 @@ pub struct UnifiedModelData {
 
 #[allow(clippy::upper_case_acronyms)]
 enum ModelDataInner {
-    Torchless(super::Parameters),
+    Torchless(Box<super::Parameters>),
     GGUF(gguf::GGUFLoader),
     Safetensors(safetensors::SafetensorsLoader),
 }
@@ -203,6 +203,18 @@ pub struct UnifiedConfig {
     pub quantization: Option<String>,
     /// Additional metadata as key-value pairs
     pub metadata: std::collections::HashMap<String, String>,
+
+    // MoE (Mixture-of-Experts) configuration
+    /// Number of routed experts per MoE layer
+    pub n_routed_experts: Option<usize>,
+    /// Number of experts activated per token (top-k)
+    pub n_experts_per_token: Option<usize>,
+    /// Number of shared experts (DeepSeek-style)
+    pub n_shared_experts: Option<usize>,
+    /// Expert FFN intermediate size
+    pub moe_intermediate_size: Option<usize>,
+    /// First layer index that uses MoE (layers before are dense)
+    pub first_moe_layer: Option<usize>,
 }
 
 impl UnifiedModelData {
@@ -222,13 +234,39 @@ impl UnifiedModelData {
             norm_eps: Some(params.config.norm_eps),
             quantization: Some(params.config.quant.clone()),
             metadata: std::collections::HashMap::new(),
+            // MoE fields from Config (default 0 = dense model)
+            n_routed_experts: if params.config.n_routed_experts > 0 {
+                Some(params.config.n_routed_experts)
+            } else {
+                None
+            },
+            n_experts_per_token: if params.config.n_experts_per_token > 0 {
+                Some(params.config.n_experts_per_token)
+            } else {
+                None
+            },
+            n_shared_experts: if params.config.n_shared_experts > 0 {
+                Some(params.config.n_shared_experts)
+            } else {
+                None
+            },
+            moe_intermediate_size: if params.config.moe_intermediate_size > 0 {
+                Some(params.config.moe_intermediate_size)
+            } else {
+                None
+            },
+            first_moe_layer: if params.config.first_moe_layer > 0 {
+                Some(params.config.first_moe_layer)
+            } else {
+                None
+            },
         };
 
         Self {
             format: ModelFormat::TorchlessBinary,
             config,
             tensor_names,
-            inner: ModelDataInner::Torchless(params),
+            inner: ModelDataInner::Torchless(Box::new(params)),
         }
     }
 

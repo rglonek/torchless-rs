@@ -765,6 +765,32 @@ impl Parameters {
             norm_eps: header.metadata["norm_eps"].parse()?,
             act_type: header.metadata["act_type"].clone(),
             quant: header.metadata["quant"].clone(),
+            // MoE fields (optional in header, default to 0 = dense model)
+            n_routed_experts: header
+                .metadata
+                .get("n_routed_experts")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            n_experts_per_token: header
+                .metadata
+                .get("n_experts_per_token")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            n_shared_experts: header
+                .metadata
+                .get("n_shared_experts")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            moe_intermediate_size: header
+                .metadata
+                .get("moe_intermediate_size")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            first_moe_layer: header
+                .metadata
+                .get("first_moe_layer")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
         };
 
         let tokenizer = Tokenizer::new(header.tokenizer.vocab, header.tokenizer.merges);

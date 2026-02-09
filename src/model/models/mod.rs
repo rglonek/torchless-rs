@@ -5,6 +5,7 @@
 //! - Phi (Microsoft)
 //! - Gemma (Google)
 //! - Qwen (Alibaba)
+//! - DeepSeek (DeepSeek-AI) -- MoE architecture
 //!
 //! Each architecture shares common building blocks but differs in:
 //! - Tensor naming conventions
@@ -12,12 +13,15 @@
 //! - Normalization approaches
 //! - RoPE scaling methods
 //! - Attention patterns
+//! - FFN type (dense MLP vs MoE)
 
+pub mod deepseek;
 pub mod gemma;
 pub mod llama;
 pub mod phi;
 pub mod qwen;
 
+pub use deepseek::{DeepSeek, LazyDeepSeek};
 pub use gemma::{Gemma, LazyGemma};
 pub use llama::{LLaMA, LazyLLaMA};
 pub use phi::{LazyPhi, Phi};
@@ -35,12 +39,14 @@ pub enum DynamicModel<'a> {
     Phi(Phi),
     Gemma(Gemma),
     Qwen(Qwen),
+    DeepSeek(DeepSeek),
     // Lazy variants
     LazyMistral(LazyMistral<'a>),
     LazyLLaMA(LazyLLaMA<'a>),
     LazyPhi(LazyPhi<'a>),
     LazyGemma(LazyGemma<'a>),
     LazyQwen(LazyQwen<'a>),
+    LazyDeepSeek(LazyDeepSeek<'a>),
 }
 
 impl DynamicModel<'_> {
@@ -71,6 +77,10 @@ impl DynamicModel<'_> {
             ModelArchitecture::Qwen => {
                 let model = Qwen::load(params)?;
                 Ok(DynamicModel::Qwen(model))
+            }
+            ModelArchitecture::DeepSeek => {
+                let model = DeepSeek::load(params)?;
+                Ok(DynamicModel::DeepSeek(model))
             }
             ModelArchitecture::Unknown => {
                 // Default to Mistral for unknown architectures
@@ -109,6 +119,10 @@ impl DynamicModel<'_> {
                 let model = Qwen::load(params)?;
                 Ok(DynamicModel::Qwen(model))
             }
+            ModelArchitecture::DeepSeek => {
+                let model = DeepSeek::load(params)?;
+                Ok(DynamicModel::DeepSeek(model))
+            }
             ModelArchitecture::Unknown => {
                 anyhow::bail!("Cannot load model with unknown architecture")
             }
@@ -123,6 +137,9 @@ impl DynamicModel<'_> {
             DynamicModel::Phi(_) | DynamicModel::LazyPhi(_) => ModelArchitecture::Phi,
             DynamicModel::Gemma(_) | DynamicModel::LazyGemma(_) => ModelArchitecture::Gemma,
             DynamicModel::Qwen(_) | DynamicModel::LazyQwen(_) => ModelArchitecture::Qwen,
+            DynamicModel::DeepSeek(_) | DynamicModel::LazyDeepSeek(_) => {
+                ModelArchitecture::DeepSeek
+            }
         }
     }
 
@@ -134,11 +151,13 @@ impl DynamicModel<'_> {
             DynamicModel::Phi(m) => &m.config,
             DynamicModel::Gemma(m) => &m.config,
             DynamicModel::Qwen(m) => &m.config,
+            DynamicModel::DeepSeek(m) => &m.config,
             DynamicModel::LazyMistral(m) => &m.config,
             DynamicModel::LazyLLaMA(m) => &m.config,
             DynamicModel::LazyPhi(m) => &m.config,
             DynamicModel::LazyGemma(m) => &m.config,
             DynamicModel::LazyQwen(m) => &m.config,
+            DynamicModel::LazyDeepSeek(m) => &m.config,
         }
     }
 
@@ -150,11 +169,13 @@ impl DynamicModel<'_> {
             DynamicModel::Phi(m) => m.forward(state, token, debug),
             DynamicModel::Gemma(m) => m.forward(state, token, debug),
             DynamicModel::Qwen(m) => m.forward(state, token, debug),
+            DynamicModel::DeepSeek(m) => m.forward(state, token, debug),
             DynamicModel::LazyMistral(m) => m.forward(state, token, debug),
             DynamicModel::LazyLLaMA(m) => m.forward(state, token, debug),
             DynamicModel::LazyPhi(m) => m.forward(state, token, debug),
             DynamicModel::LazyGemma(m) => m.forward(state, token, debug),
             DynamicModel::LazyQwen(m) => m.forward(state, token, debug),
+            DynamicModel::LazyDeepSeek(m) => m.forward(state, token, debug),
         }
     }
 
@@ -166,11 +187,13 @@ impl DynamicModel<'_> {
             DynamicModel::Phi(m) => m.fast_forward(state, token, debug),
             DynamicModel::Gemma(m) => m.fast_forward(state, token, debug),
             DynamicModel::Qwen(m) => m.fast_forward(state, token, debug),
+            DynamicModel::DeepSeek(m) => m.fast_forward(state, token, debug),
             DynamicModel::LazyMistral(m) => m.fast_forward(state, token, debug),
             DynamicModel::LazyLLaMA(m) => m.fast_forward(state, token, debug),
             DynamicModel::LazyPhi(m) => m.fast_forward(state, token, debug),
             DynamicModel::LazyGemma(m) => m.fast_forward(state, token, debug),
             DynamicModel::LazyQwen(m) => m.fast_forward(state, token, debug),
+            DynamicModel::LazyDeepSeek(m) => m.fast_forward(state, token, debug),
         }
     }
 
@@ -182,11 +205,13 @@ impl DynamicModel<'_> {
             DynamicModel::Phi(m) => m.tokenizer.encode(text),
             DynamicModel::Gemma(m) => m.tokenizer.encode(text),
             DynamicModel::Qwen(m) => m.tokenizer.encode(text),
+            DynamicModel::DeepSeek(m) => m.tokenizer.encode(text),
             DynamicModel::LazyMistral(m) => m.tokenizer.encode(text),
             DynamicModel::LazyLLaMA(m) => m.tokenizer.encode(text),
             DynamicModel::LazyPhi(m) => m.tokenizer.encode(text),
             DynamicModel::LazyGemma(m) => m.tokenizer.encode(text),
             DynamicModel::LazyQwen(m) => m.tokenizer.encode(text),
+            DynamicModel::LazyDeepSeek(m) => m.tokenizer.encode(text),
         }
     }
 
@@ -198,11 +223,13 @@ impl DynamicModel<'_> {
             DynamicModel::Phi(m) => m.tokenizer.decode(tokens),
             DynamicModel::Gemma(m) => m.tokenizer.decode(tokens),
             DynamicModel::Qwen(m) => m.tokenizer.decode(tokens),
+            DynamicModel::DeepSeek(m) => m.tokenizer.decode(tokens),
             DynamicModel::LazyMistral(m) => m.tokenizer.decode(tokens),
             DynamicModel::LazyLLaMA(m) => m.tokenizer.decode(tokens),
             DynamicModel::LazyPhi(m) => m.tokenizer.decode(tokens),
             DynamicModel::LazyGemma(m) => m.tokenizer.decode(tokens),
             DynamicModel::LazyQwen(m) => m.tokenizer.decode(tokens),
+            DynamicModel::LazyDeepSeek(m) => m.tokenizer.decode(tokens),
         }
     }
 

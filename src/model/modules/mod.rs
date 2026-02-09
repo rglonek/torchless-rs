@@ -6,7 +6,11 @@ mod lazy_attention;
 mod lazy_embedding;
 mod lazy_layer;
 mod lazy_mlp;
+pub mod lazy_moe;
+mod lazy_moe_layer;
 mod mlp;
+pub mod moe;
+mod moe_layer;
 mod rmsnorm;
 #[cfg(test)]
 mod tests;
@@ -22,6 +26,12 @@ pub use lazy_attention::LazyAttention;
 pub use lazy_embedding::LazyEmbedding;
 pub use lazy_layer::LazyLayer;
 pub use lazy_mlp::LazyMLP;
+
+// MoE (Mixture-of-Experts) variants
+pub use lazy_moe::{LazyExpert, LazyMoE, LazyMoERouter};
+pub use lazy_moe_layer::LazyMoELayer;
+pub use moe::{MoE, MoERouter};
+pub use moe_layer::MoELayer;
 
 // Flash Attention (Phase 4 Algorithmic Optimization)
 pub use flash_attention::{

@@ -157,6 +157,16 @@ pub use kernels::metal::{
     MetalBackend, MetalMemoryPool, MetalTensor,
 };
 
+// WebGPU backend - Cross-platform GPU via wgpu
+#[cfg(feature = "webgpu")]
+pub use kernels::webgpu::{
+    memory::{
+        estimate_kv_cache_memory_mb as webgpu_estimate_kv_cache_memory_mb,
+        estimate_model_memory_mb as webgpu_estimate_model_memory_mb, WebGPUMemoryPoolStats,
+    },
+    WebGPUBackend, WebGPUMemoryPool, WebGPUTensor,
+};
+
 // Tensor storage abstraction (Phase 1 foundation)
 pub use tensor::{
     Device, DeviceTransfer, Dtype, MixedPrecisionConfig, ModelSizeParams, TensorStorage,

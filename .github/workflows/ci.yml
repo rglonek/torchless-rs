@@ -46,13 +46,13 @@ jobs:
         run: python3 tests/generate_test_model.py
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --verbose --features webgpu
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --features webgpu -- -D warnings
 
   build:
     name: Build (${{ matrix.name }})
@@ -90,9 +90,9 @@ jobs:
         shell: bash
         run: |
           if [ -n "${{ matrix.rust_target }}" ]; then
-            cargo build --release --verbose --target ${{ matrix.rust_target }}
+            cargo build --release --verbose --features webgpu --target ${{ matrix.rust_target }}
           else
-            cargo build --release --verbose
+            cargo build --release --verbose --features webgpu
           fi
 
       - name: Upload binary

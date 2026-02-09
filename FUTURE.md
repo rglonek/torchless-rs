@@ -10,36 +10,6 @@ This document tracks remaining optimizations and improvements that have not yet 
 
 ---
 
-## WebGPU Backend
-
-### 🟢 Cross-Platform GPU via wgpu
-
-Add WebGPU support for cross-platform GPU acceleration.
-
-**Benefits:**
-- Works across all platforms (Windows, Linux, macOS)
-- Potential future browser deployment
-- Standardized modern GPU API
-
-**Implementation needed:**
-- [ ] Add `wgpu` crate dependency
-- [ ] Implement `WebGPUBackend` struct
-- [ ] Write WGSL compute shaders for core operations:
-  - [ ] matmul_vec kernel
-  - [ ] rmsnorm kernel
-  - [ ] softmax kernel
-  - [ ] silu kernel
-  - [ ] rope kernel
-  - [ ] attention kernels
-- [ ] Add buffer management
-- [ ] Integrate with `init_backend()` selection
-
-**Reference implementations:** See `src/kernels/cuda/mod.rs` and `src/kernels/metal/mod.rs`
-
-**Estimated effort:** Medium - similar structure to existing GPU backends
-
----
-
 ## Deferred Chat Session Commands
 
 These in-session commands require significant architectural changes and are deferred for future implementation.
@@ -87,7 +57,6 @@ Switch between chat templates (Mistral/LLaMA/Phi/Gemma/Qwen) mid-session.
 
 | Item | Priority | Status |
 |------|----------|--------|
-| WebGPU Backend | 🟢 Low | Not started |
 | `/lazy` command | 🟡 Medium | Not started |
 | `/model` command | 🟡 Medium | Not started |
 | `/template` command | 🟡 Medium | Not started |

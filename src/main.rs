@@ -29,7 +29,9 @@ fn print_usage(program: &str) {
     eprintln!("Usage: {} [OPTIONS] <model_path> [prompt]", program);
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  --backend <BACKEND>   Compute backend: auto, cpu, cuda, rocm, metal, opencl");
+    eprintln!(
+        "  --backend <BACKEND>   Compute backend: auto, cpu, cuda, rocm, metal, opencl, webgpu"
+    );
     eprintln!("                        (default: auto - selects best available)");
     eprintln!("  --max-tokens <N>      Maximum tokens to generate per response");
     eprintln!("                        (default: max-seq-len/4, clamped to 1024..32768)");
@@ -99,6 +101,8 @@ fn parse_backend(s: &str) -> Option<BackendPreference> {
         "metal" => Some(BackendPreference::Metal),
         #[cfg(feature = "opencl")]
         "opencl" => Some(BackendPreference::OpenCL),
+        #[cfg(feature = "webgpu")]
+        "webgpu" => Some(BackendPreference::WebGPU),
         _ => None,
     }
 }
@@ -245,6 +249,8 @@ fn main() -> anyhow::Result<()> {
                         eprint!(", metal");
                         #[cfg(feature = "opencl")]
                         eprint!(", opencl");
+                        #[cfg(feature = "webgpu")]
+                        eprint!(", webgpu");
                         eprintln!();
                         std::process::exit(1);
                     }

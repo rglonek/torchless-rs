@@ -310,6 +310,10 @@ pub use super::metal::MetalBackend;
 #[cfg(feature = "opencl")]
 pub use super::opencl::OpenCLBackend;
 
+// The WebGPU backend is implemented in a separate module for cross-platform GPU via wgpu.
+#[cfg(feature = "webgpu")]
+pub use super::webgpu::WebGPUBackend;
+
 // =============================================================================
 // Backend Selection
 // =============================================================================
@@ -334,6 +338,9 @@ pub enum BackendPreference {
     /// Prefer OpenCL (cross-platform GPU).
     #[cfg(feature = "opencl")]
     OpenCL,
+    /// Prefer WebGPU (cross-platform GPU via wgpu).
+    #[cfg(feature = "webgpu")]
+    WebGPU,
 }
 
 /// Dynamic backend wrapper that can hold any backend type.
@@ -348,6 +355,8 @@ pub enum Backend {
     Metal(MetalBackend),
     #[cfg(feature = "opencl")]
     OpenCL(OpenCLBackend),
+    #[cfg(feature = "webgpu")]
+    WebGPU(WebGPUBackend),
 }
 
 impl Backend {
@@ -363,6 +372,8 @@ impl Backend {
             Backend::Metal(_) => "metal",
             #[cfg(feature = "opencl")]
             Backend::OpenCL(_) => "opencl",
+            #[cfg(feature = "webgpu")]
+            Backend::WebGPU(_) => "webgpu",
         }
     }
 
@@ -401,6 +412,15 @@ impl Backend {
             _ => None,
         }
     }
+
+    /// Get a reference to the WebGPU backend if this is a WebGPU backend.
+    #[cfg(feature = "webgpu")]
+    pub fn as_webgpu(&self) -> Option<&WebGPUBackend> {
+        match self {
+            Backend::WebGPU(b) => Some(b),
+            _ => None,
+        }
+    }
 }
 
 // Implement KernelBackend for Backend enum to allow dynamic dispatch
@@ -427,6 +447,8 @@ impl KernelBackend for Backend {
             Backend::Metal(b) => b.matmul_vec(w, x),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(b) => b.matmul_vec(w, x),
+            #[cfg(feature = "webgpu")]
+            Backend::WebGPU(b) => b.matmul_vec(w, x),
         }
     }
 
@@ -441,6 +463,8 @@ impl KernelBackend for Backend {
             Backend::Metal(b) => b.matmul_vec_into(w, x, out),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(b) => b.matmul_vec_into(w, x, out),
+            #[cfg(feature = "webgpu")]
+            Backend::WebGPU(b) => b.matmul_vec_into(w, x, out),
         }
     }
 
@@ -455,6 +479,8 @@ impl KernelBackend for Backend {
             Backend::Metal(b_end) => b_end.matmul(a, b),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(b_end) => b_end.matmul(a, b),
+            #[cfg(feature = "webgpu")]
+            Backend::WebGPU(b_end) => b_end.matmul(a, b),
         }
     }
 
@@ -469,6 +495,8 @@ impl KernelBackend for Backend {
             Backend::Metal(b) => b.rmsnorm(x, weight, eps),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(b) => b.rmsnorm(x, weight, eps),
+            #[cfg(feature = "webgpu")]
+            Backend::WebGPU(b) => b.rmsnorm(x, weight, eps),
         }
     }
 
@@ -483,6 +511,8 @@ impl KernelBackend for Backend {
             Backend::Metal(b) => b.softmax(x),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(b) => b.softmax(x),
+            #[cfg(feature = "webgpu")]
+            Backend::WebGPU(b) => b.softmax(x),
         }
     }
 
@@ -497,6 +527,8 @@ impl KernelBackend for Backend {
             Backend::Metal(b) => b.softmax_view(x),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(b) => b.softmax_view(x),
+            #[cfg(feature = "webgpu")]
+            Backend::WebGPU(b) => b.softmax_view(x),
         }
     }
 
@@ -511,6 +543,8 @@ impl KernelBackend for Backend {
             Backend::Metal(b) => b.silu(x),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(b) => b.silu(x),
+            #[cfg(feature = "webgpu")]
+            Backend::WebGPU(b) => b.silu(x),
         }
     }
 
@@ -525,6 +559,8 @@ impl KernelBackend for Backend {
             Backend::Metal(b) => b.apply_rope(x, cos, sin),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(b) => b.apply_rope(x, cos, sin),
+            #[cfg(feature = "webgpu")]
+            Backend::WebGPU(b) => b.apply_rope(x, cos, sin),
         }
     }
 
@@ -545,6 +581,8 @@ impl KernelBackend for Backend {
             Backend::Metal(b) => b.compute_attention_scores(query, keys, scores, scale),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(b) => b.compute_attention_scores(query, keys, scores, scale),
+            #[cfg(feature = "webgpu")]
+            Backend::WebGPU(b) => b.compute_attention_scores(query, keys, scores, scale),
         }
     }
 
@@ -564,6 +602,8 @@ impl KernelBackend for Backend {
             Backend::Metal(b) => b.weighted_sum_rows(weights, matrix, out),
             #[cfg(feature = "opencl")]
             Backend::OpenCL(b) => b.weighted_sum_rows(weights, matrix, out),
+            #[cfg(feature = "webgpu")]
+            Backend::WebGPU(b) => b.weighted_sum_rows(weights, matrix, out),
         }
     }
 }
@@ -622,6 +662,15 @@ pub fn init_backend(preference: BackendPreference) -> anyhow::Result<Backend> {
                 }
             }
 
+            #[cfg(feature = "webgpu")]
+            {
+                if WebGPUBackend::is_available() {
+                    if let Ok(backend) = WebGPUBackend::new() {
+                        return Ok(Backend::WebGPU(backend));
+                    }
+                }
+            }
+
             // Fall back to CPU
             Ok(Backend::Cpu(CpuBackend::new()))
         }
@@ -634,6 +683,8 @@ pub fn init_backend(preference: BackendPreference) -> anyhow::Result<Backend> {
         BackendPreference::Metal => Ok(Backend::Metal(MetalBackend::new()?)),
         #[cfg(feature = "opencl")]
         BackendPreference::OpenCL => Ok(Backend::OpenCL(OpenCLBackend::new()?)),
+        #[cfg(feature = "webgpu")]
+        BackendPreference::WebGPU => Ok(Backend::WebGPU(WebGPUBackend::new()?)),
     }
 }
 
@@ -669,6 +720,7 @@ pub enum BackendType {
     Rocm,
     Metal,
     OpenCL,
+    WebGPU,
 }
 
 impl std::fmt::Display for BackendType {
@@ -679,6 +731,7 @@ impl std::fmt::Display for BackendType {
             BackendType::Rocm => write!(f, "ROCm"),
             BackendType::Metal => write!(f, "Metal"),
             BackendType::OpenCL => write!(f, "OpenCL"),
+            BackendType::WebGPU => write!(f, "WebGPU"),
         }
     }
 }
@@ -829,6 +882,22 @@ pub fn discover_backends() -> Vec<BackendInfo> {
         });
     }
 
+    // Check WebGPU
+    #[cfg(feature = "webgpu")]
+    {
+        backends.push(discover_webgpu());
+    }
+    #[cfg(not(feature = "webgpu"))]
+    {
+        backends.push(BackendInfo {
+            backend_type: BackendType::WebGPU,
+            name: "WebGPU".to_string(),
+            available: false,
+            devices: vec![],
+            error: Some("WebGPU feature not enabled at compile time".to_string()),
+        });
+    }
+
     backends
 }
 
@@ -836,12 +905,13 @@ pub fn discover_backends() -> Vec<BackendInfo> {
 pub fn best_available_backend() -> BackendType {
     let backends = discover_backends();
 
-    // Priority: CUDA > ROCm > Metal > OpenCL > CPU
+    // Priority: CUDA > ROCm > Metal > OpenCL > WebGPU > CPU
     for backend_type in [
         BackendType::Cuda,
         BackendType::Rocm,
         BackendType::Metal,
         BackendType::OpenCL,
+        BackendType::WebGPU,
     ] {
         if let Some(info) = backends.iter().find(|b| b.backend_type == backend_type) {
             if info.available && !info.devices.is_empty() {
@@ -857,12 +927,13 @@ pub fn best_available_backend() -> BackendType {
 pub fn select_backend_for_model(required_bytes: usize) -> anyhow::Result<(BackendType, usize)> {
     let backends = discover_backends();
 
-    // Priority: CUDA > ROCm > Metal > OpenCL > CPU
+    // Priority: CUDA > ROCm > Metal > OpenCL > WebGPU > CPU
     for backend_type in [
         BackendType::Cuda,
         BackendType::Rocm,
         BackendType::Metal,
         BackendType::OpenCL,
+        BackendType::WebGPU,
     ] {
         if let Some(info) = backends.iter().find(|b| b.backend_type == backend_type) {
             if info.available {
@@ -1093,6 +1164,59 @@ fn discover_opencl() -> BackendInfo {
     }
 }
 
+#[cfg(feature = "webgpu")]
+fn discover_webgpu() -> BackendInfo {
+    if WebGPUBackend::is_available() {
+        // Try to get adapter info
+        let info = pollster::block_on(async {
+            let instance = wgpu::Instance::default();
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    ..Default::default()
+                })
+                .await
+        });
+
+        match info {
+            Ok(adapter) => {
+                let adapter_info = adapter.get_info();
+                let name = adapter_info.name.clone();
+
+                BackendInfo {
+                    backend_type: BackendType::WebGPU,
+                    name: "WebGPU".to_string(),
+                    available: true,
+                    devices: vec![DeviceInfo {
+                        index: 0,
+                        name,
+                        total_memory: 0, // wgpu doesn't expose this easily
+                        free_memory: None,
+                        compute_capability: Some(format!("{:?}", adapter_info.backend)),
+                        unified_memory: false,
+                    }],
+                    error: None,
+                }
+            }
+            Err(_) => BackendInfo {
+                backend_type: BackendType::WebGPU,
+                name: "WebGPU".to_string(),
+                available: false,
+                devices: vec![],
+                error: Some("No WebGPU adapter found".to_string()),
+            },
+        }
+    } else {
+        BackendInfo {
+            backend_type: BackendType::WebGPU,
+            name: "WebGPU".to_string(),
+            available: false,
+            devices: vec![],
+            error: Some("WebGPU not available".to_string()),
+        }
+    }
+}
+
 // =============================================================================
 // System Information Helpers
 // =============================================================================
@@ -1275,6 +1399,12 @@ pub fn init_backend_with_memory_check(
                     return Ok(Backend::OpenCL(backend));
                 }
             }
+            #[cfg(feature = "webgpu")]
+            Ok((BackendType::WebGPU, _)) => {
+                if let Ok(backend) = WebGPUBackend::new() {
+                    return Ok(Backend::WebGPU(backend));
+                }
+            }
             _ => {}
         }
 
@@ -1367,6 +1497,21 @@ pub fn init_backend_with_memory_check(
                 }
             }
             Ok(Backend::OpenCL(OpenCLBackend::new()?))
+        }
+        #[cfg(feature = "webgpu")]
+        BackendPreference::WebGPU => {
+            let webgpu_info = backends
+                .iter()
+                .find(|b| b.backend_type == BackendType::WebGPU);
+            if let Some(info) = webgpu_info {
+                if !info.available {
+                    anyhow::bail!(
+                        "WebGPU not available: {}",
+                        info.error.as_deref().unwrap_or("Unknown error")
+                    );
+                }
+            }
+            Ok(Backend::WebGPU(WebGPUBackend::new()?))
         }
         #[allow(unreachable_patterns)]
         _ => init_backend(preference),

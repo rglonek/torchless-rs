@@ -84,13 +84,14 @@ ${BOLD}Target Options:${NC}
 ${BOLD}Feature Options:${NC}
   --features FEATURES   Comma-separated cargo features (default: simd,parallel)
                         Available: simd, parallel, cuda, rocm, metal-gpu, opencl,
-                                   openblas, blis, accelerate
+                                   webgpu, openblas, blis, accelerate
   --cpu-only            Build without any GPU backends (simd,parallel only)
   --gpu                 Add all GPU backends available for target (recommended)
   --cuda                Add CUDA support
   --rocm                Add ROCm support
   --metal               Add Metal support
   --opencl              Add OpenCL support
+  --webgpu              Add WebGPU support
   --all-gpu             Alias for --gpu
 
 ${BOLD}Build Options:${NC}
@@ -150,6 +151,8 @@ parse_args() {
                 FEATURES="${FEATURES},metal-gpu"; shift ;;
             --opencl)
                 FEATURES="${FEATURES},opencl"; shift ;;
+            --webgpu)
+                FEATURES="${FEATURES},webgpu"; shift ;;
             --gpu|--all-gpu)
                 ALL_GPU=true; shift ;;
             --profile)
@@ -264,20 +267,20 @@ configure_features() {
         case "$TARGET_OS" in
             linux)
                 if [ "$TARGET_ARCH" = "x86_64" ]; then
-                    FEATURES="${FEATURES},cuda,rocm,opencl"
+                    FEATURES="${FEATURES},cuda,rocm,opencl,webgpu"
                 else
-                    FEATURES="${FEATURES},opencl"
+                    FEATURES="${FEATURES},opencl,webgpu"
                 fi
                 ;;
             macos)
                 if [ "$TARGET_ARCH" = "aarch64" ]; then
-                    FEATURES="${FEATURES},metal-gpu,opencl"
+                    FEATURES="${FEATURES},metal-gpu,opencl,webgpu"
                 else
-                    FEATURES="${FEATURES},opencl"
+                    FEATURES="${FEATURES},opencl,webgpu"
                 fi
                 ;;
             windows)
-                FEATURES="${FEATURES},cuda,opencl"
+                FEATURES="${FEATURES},cuda,opencl,webgpu"
                 ;;
         esac
     fi
@@ -322,6 +325,9 @@ configure_output() {
         fi
         if [[ "$FEATURES" == *"opencl"* ]]; then
             feature_suffix="${feature_suffix}-opencl"
+        fi
+        if [[ "$FEATURES" == *"webgpu"* ]]; then
+            feature_suffix="${feature_suffix}-webgpu"
         fi
         if [ -z "$feature_suffix" ]; then
             feature_suffix="-cpu"

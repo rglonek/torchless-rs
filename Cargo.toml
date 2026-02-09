@@ -40,6 +40,9 @@ cudarc = { version = "0.11", optional = true, default-features = false, features
 metal = { version = "0.29", optional = true }
 ocl = { version = "0.19", optional = true }
 libloading = { version = "0.8", optional = true }
+wgpu = { version = "28.0.0", optional = true }
+pollster = { version = "0.4.0", optional = true }
+bytemuck = { version = "1.25.0", optional = true, features = ["derive"] }
 
 [features]
 default = []
@@ -58,6 +61,8 @@ cuda = ["cudarc"]
 rocm = ["libloading"]  # ROCm backend for AMD GPUs (requires ROCm runtime and rocBLAS installed)
 metal-gpu = ["metal"]
 opencl = ["ocl"]
+# WebGPU backend (wgpu crate + pollster for blocking on async)
+webgpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
 [lib]
 name = "torchless"

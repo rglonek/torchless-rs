@@ -10,6 +10,7 @@ GPU support provides 10-100x speedup over CPU inference.
 | [ROCm](rocm.md) | AMD | `rocm` | Linux |
 | [Metal](metal.md) | Apple | `metal-gpu` | macOS |
 | [OpenCL](opencl.md) | Cross-platform | `opencl` | All |
+| [WebGPU](webgpu.md) | Cross-platform | `webgpu` | All |
 
 ## Backend Selection
 
@@ -28,7 +29,8 @@ println!("Using: {}", backend.name());
 2. ROCm (AMD GPUs) 
 3. Metal (Apple Silicon)
 4. OpenCL (fallback)
-5. CPU (always available)
+5. WebGPU (cross-platform via wgpu)
+6. CPU (always available)
 
 ### Explicit Selection
 
@@ -38,6 +40,7 @@ let backend = init_backend(BackendPreference::Cuda)?;
 let backend = init_backend(BackendPreference::Metal)?;
 let backend = init_backend(BackendPreference::Rocm)?;
 let backend = init_backend(BackendPreference::OpenCL)?;
+let backend = init_backend(BackendPreference::WebGPU)?;
 let backend = init_backend(BackendPreference::Cpu)?;
 ```
 
@@ -95,6 +98,9 @@ cargo build --release --features "metal-gpu,simd,parallel"
 
 # OpenCL (cross-platform)
 cargo build --release --features "opencl,simd,parallel"
+
+# WebGPU (cross-platform)
+cargo build --release --features "webgpu,simd,parallel"
 ```
 
 ## Performance Expectations
@@ -109,13 +115,13 @@ cargo build --release --features "opencl,simd,parallel"
 
 ## Backend Comparison
 
-| Feature | CUDA | ROCm | Metal | OpenCL |
-|---------|------|------|-------|--------|
-| Vendor | NVIDIA | AMD | Apple | Cross-platform |
-| BLAS Library | cuBLAS | rocBLAS | MPS | clBLAS |
-| Runtime Compilation | nvrtc | hiprtc | MSL | OpenCL C |
-| Performance | Best for NVIDIA | Best for AMD | Best for Apple | Good fallback |
-| Platform | Linux/Windows | Linux | macOS | All |
+| Feature | CUDA | ROCm | Metal | OpenCL | WebGPU |
+|---------|------|------|-------|--------|--------|
+| Vendor | NVIDIA | AMD | Apple | Cross-platform | Cross-platform |
+| BLAS Library | cuBLAS | rocBLAS | MPS | clBLAS | wgpu |
+| Runtime Compilation | nvrtc | hiprtc | MSL | OpenCL C | WGSL |
+| Performance | Best for NVIDIA | Best for AMD | Best for Apple | Good fallback | Good fallback |
+| Platform | Linux/Windows | Linux | macOS | All | All |
 
 ## GPU Requirements
 
@@ -136,3 +142,7 @@ cargo build --release --features "opencl,simd,parallel"
 ### OpenCL
 - OpenCL 1.2+ runtime
 - Any GPU with OpenCL driver
+
+### WebGPU
+- Any GPU with Vulkan, DirectX 12, or Metal support
+- No additional SDK required (wgpu handles everything)

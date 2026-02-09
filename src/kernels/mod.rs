@@ -36,6 +36,9 @@ pub mod metal;
 #[cfg(feature = "opencl")]
 pub mod opencl;
 
+#[cfg(feature = "webgpu")]
+pub mod webgpu;
+
 #[cfg(test)]
 mod tests;
 
@@ -94,6 +97,10 @@ pub use metal::{MetalBackend, MetalMemoryPool, MetalTensor};
 // Re-export OpenCL backend types when the feature is enabled
 #[cfg(feature = "opencl")]
 pub use opencl::{OpenCLBackend, OpenCLMemoryPool, OpenCLTensor};
+
+// Re-export WebGPU backend types when the feature is enabled
+#[cfg(feature = "webgpu")]
+pub use webgpu::{WebGPUBackend, WebGPUMemoryPool, WebGPUTensor};
 
 // Re-export dispatch types for runtime CPU feature detection
 pub use dispatch::{

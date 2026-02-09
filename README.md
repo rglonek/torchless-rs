@@ -10,7 +10,7 @@ A Rust implementation of [Torchless](https://github.com/ryanssenn/torchless) —
 - **Mixture-of-Experts** — Full MoE support with top-k routing and shared experts (DeepSeek-V3, R1)
 - **Thinking Models** — Auto-detected `<think>`/`</think>` reasoning traces (DeepSeek-R1, QwQ, distilled variants)
 - **Coding Mode** — Structured SEARCH/REPLACE edit proposals with `@file` references, diff review, and apply
-- **GPU Acceleration** — CUDA (NVIDIA), ROCm (AMD), Metal (Apple), OpenCL
+- **GPU Acceleration** — CUDA (NVIDIA), ROCm (AMD), Metal (Apple), OpenCL, WebGPU
 - **Quantization** — FP32, FP16, INT8, INT4 (Q4_0, Q4_K_M)
 - **Model Formats** — GGUF, Safetensors, native binary
 - **Memory Efficient** — Lazy loading (<2GB RAM), Flash Attention
@@ -57,6 +57,7 @@ GPU backends are compiled in but only initialized when selected via `--backend`.
 | Linux | `cargo build --release --features "simd,parallel,openblas"` |
 | Linux (NVIDIA) | `cargo build --release --features "cuda,simd,parallel"` |
 | Linux (AMD) | `cargo build --release --features "rocm,simd,parallel"` |
+| Any GPU (WebGPU) | `cargo build --release --features "webgpu,simd,parallel"` |
 
 ## Usage
 
@@ -75,6 +76,7 @@ GPU backends are compiled in but only initialized when selected via `--backend`.
 
 # Select GPU backend at runtime
 ./target/release/torchless --backend cuda model.bin "Hello"
+./target/release/torchless --backend webgpu model.bin "Hello"
 ./target/release/torchless --backend auto model.bin "Hello"  # auto-select best
 
 # List available backends
@@ -132,6 +134,7 @@ See [Supported Models & Memory](docs/models.md) for per-model memory requirement
 | [ROCm](docs/gpu/rocm.md) | AMD support |
 | [Metal](docs/gpu/metal.md) | Apple Silicon support |
 | [OpenCL](docs/gpu/opencl.md) | Cross-platform support |
+| [WebGPU](docs/gpu/webgpu.md) | Cross-platform (wgpu) |
 
 ### Reference
 | Topic | Description |

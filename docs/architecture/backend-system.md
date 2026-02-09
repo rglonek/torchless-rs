@@ -9,11 +9,11 @@ The backend trait system provides an abstraction layer for multiple compute back
 │                    KernelBackend Trait                       │
 └─────────────────────────────────────────────────────────────┘
                              │
-       ┌─────────────────────┼─────────────────────┐
-       ▼                     ▼                     ▼
-┌─────────────┐       ┌─────────────┐       ┌─────────────┐
-│ CpuBackend  │       │ CudaBackend │       │ MetalBackend│
-└─────────────┘       └─────────────┘       └─────────────┘
+       ┌──────────┬──────────┬──────────┬──────────┬──────────┐
+       ▼          ▼          ▼          ▼          ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+│CpuBackend│ │CudaBackend│ │MetalBackend│ │OpenCLBackend│ │WebGPUBackend│
+└──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘
 ```
 
 ## KernelBackend Trait
@@ -71,6 +71,7 @@ pub struct CpuBackend {
 | ROCm | `rocm` | Linux | HIP, rocBLAS |
 | Metal | `metal-gpu` | macOS | metal-rs, MPS |
 | OpenCL | `opencl` | All | ocl |
+| WebGPU | `webgpu` | All | wgpu |
 
 ## Backend Selection
 
@@ -84,6 +85,7 @@ pub enum BackendPreference {
     Metal,   // Prefer Metal
     Rocm,    // Prefer ROCm
     OpenCL,  // Prefer OpenCL
+    WebGPU,  // Prefer WebGPU
 }
 
 // Usage
@@ -97,7 +99,8 @@ println!("Using backend: {}", backend.name());
 2. ROCm (AMD GPUs)
 3. Metal (Apple Silicon)
 4. OpenCL (fallback GPU)
-5. CPU (always available)
+5. WebGPU (cross-platform via wgpu)
+6. CPU (always available)
 
 ## Backend Discovery
 

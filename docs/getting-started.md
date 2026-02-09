@@ -28,6 +28,7 @@ cargo build --release
 ./target/release/torchless --backend auto model.bin "Hello"    # Auto-select best
 ./target/release/torchless --backend cuda model.bin "Hello"    # Force CUDA
 ./target/release/torchless --backend opencl model.bin "Hello"  # Force OpenCL
+./target/release/torchless --backend webgpu model.bin "Hello"  # Force WebGPU
 ./target/release/torchless --backend cpu model.bin "Hello"     # Force CPU
 
 # List available backends
@@ -61,7 +62,7 @@ cargo build --release
 | macOS (CPU) | `cargo build --release --features "simd,parallel,accelerate"` |
 | macOS (GPU) | `cargo build --release --features "metal-gpu,opencl,simd,parallel,accelerate"` |
 | Linux (CPU) | `cargo build --release --features "simd,parallel"` |
-| Linux (GPU) | `cargo build --release --features "cuda,rocm,opencl,simd,parallel"` |
+| Linux (GPU) | `cargo build --release --features "cuda,rocm,opencl,webgpu,simd,parallel"` |
 
 **Note**: Build with multiple GPU backends and select at runtime via `--backend`.
 
@@ -78,6 +79,7 @@ cargo build --release
 | `rocm` | AMD GPU support | ROCm |
 | `metal-gpu` | Apple Silicon GPU | None (macOS only) |
 | `opencl` | Cross-platform GPU | OpenCL runtime |
+| `webgpu` | Cross-platform GPU (WebGPU/Vulkan/DX12/Metal) | None |
 
 ## Platform Setup
 
@@ -151,6 +153,17 @@ sudo apt install ./amdgpu-install_6.0.60000-1_all.deb
 sudo amdgpu-install --usecase=rocm
 
 cargo build --release --features "rocm,simd,parallel"
+```
+
+</details>
+
+<details>
+<summary><b>Any GPU (WebGPU)</b> - Cross-platform, no SDK required</summary>
+
+Works on any platform with Vulkan, DirectX 12, or Metal support.
+
+```bash
+cargo build --release --features "webgpu,simd,parallel"
 ```
 
 </details>

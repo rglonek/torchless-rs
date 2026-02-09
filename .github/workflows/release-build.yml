@@ -46,7 +46,7 @@ jobs:
             ext: ".exe"
             archive: zip
             features: "simd,parallel,cuda,opencl,webgpu"
-            install: "vcpkg install opencl:x64-windows && echo \"OPENCL_PATH=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\" >> $GITHUB_ENV"
+            install: "vcpkg install opencl:x64-windows && echo \"OPENCL_PATH=${VCPKG_INSTALLATION_ROOT}/installed/x64-windows\" >> $GITHUB_ENV"
 
     steps:
       - uses: actions/checkout@v4

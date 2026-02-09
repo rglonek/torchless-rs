@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod coding;
 pub mod kernels;
 pub mod loader;
 pub mod memory;
@@ -12,6 +13,12 @@ pub use chat::{
     display_thinking_token, display_thinking_token_to, strip_thinking, ANSI_DIM, ANSI_RESET,
 };
 pub use chat::{ChatMessage, ChatRole, ChatTemplate, ThinkingState, TokenAction};
+
+// Coding mode support
+pub use coding::{
+    apply_edit, check_path_blocked, coding_system_prompt, expand_file_references, format_edit_diff,
+    parse_edit_blocks, parse_file_references, FileReference, PendingEdit,
+};
 
 // Core loader types
 pub use loader::{Config, Parameters, TensorDtype, TensorView};

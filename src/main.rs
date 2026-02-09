@@ -4,10 +4,12 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use torchless::tokenizer::Tokenizer;
 use torchless::{
-    display_thinking_token_to, generate, generate_lazy, generate_lazy_until_eos,
-    generate_until_eos, init_backend, print_backend_summary, strip_thinking, BackendPreference,
+    apply_edit, coding_system_prompt, display_thinking_token_to, expand_file_references,
+    format_edit_diff, generate, generate_lazy, generate_lazy_until_eos, generate_until_eos,
+    init_backend, parse_edit_blocks, print_backend_summary, strip_thinking, BackendPreference,
     ChatMessage, ChatRole, ChatTemplate, GenerationResult, InferenceState, LazyMistral, Mistral,
-    Parameters, SamplingConfig, SelfSpeculativeDecoder, SpeculativeConfig, ThinkingState,
+    Parameters, PendingEdit, SamplingConfig, SelfSpeculativeDecoder, SpeculativeConfig,
+    ThinkingState,
 };
 
 #[cfg(unix)]
@@ -968,6 +970,11 @@ pub(crate) fn run_chat_repl(
     // Track length of the last assistant generation (for /context and /retry)
     let mut last_generation_len: usize = 0;
 
+    // Coding mode state
+    let mut coding_mode = false;
+    let mut pending_edits: Vec<PendingEdit> = Vec::new();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
     writeln!(output)?;
     writeln!(output, "Chat mode active. Type /help for commands.")?;
     writeln!(output)?;
@@ -1282,6 +1289,16 @@ pub(crate) fn run_chat_repl(
                             }
                         }
                         None => "none".to_string(),
+                    }
+                )?;
+                writeln!(
+                    output,
+                    "  coding:       {}{}",
+                    if coding_mode { "enabled" } else { "disabled" },
+                    if !pending_edits.is_empty() {
+                        format!(" ({} pending edit(s))", pending_edits.len())
+                    } else {
+                        String::new()
                     }
                 )?;
                 continue;
@@ -1668,6 +1685,251 @@ pub(crate) fn run_chat_repl(
                 skip_processing = true;
                 // Don't continue -- fall through to generation
             }
+            "/code" => {
+                match arg {
+                    Some("on") => {
+                        if !coding_mode {
+                            coding_mode = true;
+                            // Append coding instructions to the system prompt
+                            let addendum = coding_system_prompt();
+                            match config.system_prompt {
+                                Some(ref mut sys) => {
+                                    sys.push_str(addendum);
+                                }
+                                None => {
+                                    config.system_prompt = Some(addendum.trim_start().to_string());
+                                }
+                            }
+                            // Update history
+                            if !history.is_empty() && history[0].role == ChatRole::System {
+                                history[0] =
+                                    ChatMessage::system(config.system_prompt.as_deref().unwrap());
+                            } else {
+                                history.insert(
+                                    0,
+                                    ChatMessage::system(config.system_prompt.as_deref().unwrap()),
+                                );
+                            }
+                            state.reset();
+                            processed_tokens.clear();
+                            writeln!(
+                                output,
+                                "Coding mode: on. Use @file references and the model will propose edits. KV cache reset."
+                            )?;
+                        } else {
+                            writeln!(output, "Coding mode is already on.")?;
+                        }
+                    }
+                    Some("off") => {
+                        if coding_mode {
+                            coding_mode = false;
+                            // Remove coding addendum from system prompt
+                            let addendum = coding_system_prompt();
+                            if let Some(ref mut sys) = config.system_prompt {
+                                if let Some(pos) = sys.find(addendum) {
+                                    sys.replace_range(pos..pos + addendum.len(), "");
+                                }
+                                if sys.trim().is_empty() {
+                                    config.system_prompt = None;
+                                    if !history.is_empty() && history[0].role == ChatRole::System {
+                                        history.remove(0);
+                                    }
+                                } else if !history.is_empty() && history[0].role == ChatRole::System
+                                {
+                                    history[0] = ChatMessage::system(sys.as_str());
+                                }
+                            }
+                            state.reset();
+                            processed_tokens.clear();
+                            writeln!(output, "Coding mode: off. KV cache reset.")?;
+                        } else {
+                            writeln!(output, "Coding mode is already off.")?;
+                        }
+                    }
+                    None => {
+                        // Toggle
+                        if coding_mode {
+                            // Simulate /code off
+                            coding_mode = false;
+                            let addendum = coding_system_prompt();
+                            if let Some(ref mut sys) = config.system_prompt {
+                                if let Some(pos) = sys.find(addendum) {
+                                    sys.replace_range(pos..pos + addendum.len(), "");
+                                }
+                                if sys.trim().is_empty() {
+                                    config.system_prompt = None;
+                                    if !history.is_empty() && history[0].role == ChatRole::System {
+                                        history.remove(0);
+                                    }
+                                } else if !history.is_empty() && history[0].role == ChatRole::System
+                                {
+                                    history[0] = ChatMessage::system(sys.as_str());
+                                }
+                            }
+                            state.reset();
+                            processed_tokens.clear();
+                            writeln!(output, "Coding mode: off. KV cache reset.")?;
+                        } else {
+                            coding_mode = true;
+                            let addendum = coding_system_prompt();
+                            match config.system_prompt {
+                                Some(ref mut sys) => {
+                                    sys.push_str(addendum);
+                                }
+                                None => {
+                                    config.system_prompt = Some(addendum.trim_start().to_string());
+                                }
+                            }
+                            if !history.is_empty() && history[0].role == ChatRole::System {
+                                history[0] =
+                                    ChatMessage::system(config.system_prompt.as_deref().unwrap());
+                            } else {
+                                history.insert(
+                                    0,
+                                    ChatMessage::system(config.system_prompt.as_deref().unwrap()),
+                                );
+                            }
+                            state.reset();
+                            processed_tokens.clear();
+                            writeln!(
+                                output,
+                                "Coding mode: on. Use @file references and the model will propose edits. KV cache reset."
+                            )?;
+                        }
+                    }
+                    Some(other) => {
+                        writeln!(
+                            output,
+                            "Invalid argument '{}'. Usage: /code [on|off]",
+                            other
+                        )?;
+                    }
+                }
+                continue;
+            }
+            "/diff" => {
+                if pending_edits.is_empty() {
+                    writeln!(output, "No pending edits.")?;
+                } else {
+                    writeln!(output, "{} pending edit(s):\n", pending_edits.len())?;
+                    for (i, edit) in pending_edits.iter().enumerate() {
+                        write!(output, "{}", format_edit_diff(edit, i))?;
+                    }
+                }
+                continue;
+            }
+            "/apply" => {
+                if pending_edits.is_empty() {
+                    writeln!(output, "No pending edits to apply.")?;
+                    continue;
+                }
+
+                // Parse argument: optional index (1-based) or "all"
+                let indices: Vec<usize> = match arg {
+                    None | Some("all") => (0..pending_edits.len()).collect(),
+                    Some(n) => match n.parse::<usize>() {
+                        Ok(idx) if idx >= 1 && idx <= pending_edits.len() => {
+                            vec![idx - 1]
+                        }
+                        _ => {
+                            writeln!(
+                                output,
+                                "Usage: /apply [all|N]  (N is 1-{})",
+                                pending_edits.len()
+                            )?;
+                            continue;
+                        }
+                    },
+                };
+
+                let mut applied = 0usize;
+                let mut skipped = 0usize;
+                let mut failed = 0usize;
+                let total = indices.len();
+                let mut applied_indices: Vec<usize> = Vec::new();
+
+                for (seq, &idx) in indices.iter().enumerate() {
+                    let edit = &pending_edits[idx];
+                    write!(output, "{}", format_edit_diff(edit, idx))?;
+                    write!(output, "Apply edit {}/{}? [y/N]: ", seq + 1, total)?;
+                    output.flush()?;
+
+                    let mut confirm = String::new();
+                    match input.read_line(&mut confirm) {
+                        Ok(0) => break,
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+
+                    if confirm.trim().eq_ignore_ascii_case("y") {
+                        match apply_edit(edit, &cwd) {
+                            Ok(()) => {
+                                writeln!(output, "Applied.")?;
+                                applied += 1;
+                                applied_indices.push(idx);
+                            }
+                            Err(e) => {
+                                writeln!(output, "Error: {}", e)?;
+                                failed += 1;
+                            }
+                        }
+                    } else {
+                        writeln!(output, "Skipped.")?;
+                        skipped += 1;
+                    }
+                }
+
+                // Remove applied edits (in reverse order to preserve indices)
+                applied_indices.sort_unstable();
+                for &idx in applied_indices.iter().rev() {
+                    pending_edits.remove(idx);
+                }
+
+                if total > 1 || failed > 0 {
+                    writeln!(
+                        output,
+                        "Summary: {} applied, {} skipped, {} failed. {} pending.",
+                        applied,
+                        skipped,
+                        failed,
+                        pending_edits.len()
+                    )?;
+                }
+                continue;
+            }
+            "/discard" => {
+                if pending_edits.is_empty() {
+                    writeln!(output, "No pending edits to discard.")?;
+                    continue;
+                }
+
+                match arg {
+                    None | Some("all") => {
+                        let count = pending_edits.len();
+                        pending_edits.clear();
+                        writeln!(output, "Discarded {} edit(s).", count)?;
+                    }
+                    Some(n) => match n.parse::<usize>() {
+                        Ok(idx) if idx >= 1 && idx <= pending_edits.len() => {
+                            pending_edits.remove(idx - 1);
+                            writeln!(
+                                output,
+                                "Discarded edit {}. {} remaining.",
+                                idx,
+                                pending_edits.len()
+                            )?;
+                        }
+                        _ => {
+                            writeln!(
+                                output,
+                                "Usage: /discard [all|N]  (N is 1-{})",
+                                pending_edits.len()
+                            )?;
+                        }
+                    },
+                }
+                continue;
+            }
             "/help" => {
                 writeln!(output, "Commands:")?;
                 writeln!(output, "  /quit, /exit, /q   Exit chat")?;
@@ -1716,8 +1978,31 @@ pub(crate) fn run_chat_repl(
                     output,
                     "  /load <file>       Load conversation (and optional settings) from JSON file"
                 )?;
+                writeln!(output)?;
+                writeln!(output, "Coding mode:")?;
+                writeln!(
+                    output,
+                    "  /code [on|off]     Toggle coding mode (structured edit proposals)"
+                )?;
+                writeln!(
+                    output,
+                    "  /diff              Show pending file edits proposed by the model"
+                )?;
+                writeln!(
+                    output,
+                    "  /apply [all|N]     Apply pending edits to files (with confirmation)"
+                )?;
+                writeln!(
+                    output,
+                    "  /discard [all|N]   Discard pending edits without applying"
+                )?;
+                writeln!(output)?;
                 writeln!(output, "  /help              Show this help")?;
                 writeln!(output)?;
+                writeln!(
+                    output,
+                    "Use @filepath in messages to include file contents (e.g. @src/main.rs:10-50)."
+                )?;
                 writeln!(output, "Anything else is sent as a message to the model.")?;
                 continue;
             }
@@ -1733,8 +2018,22 @@ pub(crate) fn run_chat_repl(
         }
 
         if !skip_processing {
+            // Expand @file references in user input (works with or without /code mode)
+            let effective_input = if user_input.contains('@') {
+                let (expanded, _paths) = expand_file_references(&user_input, &cwd);
+                if config.debug && expanded != user_input {
+                    writeln!(output, "[expanded {} @-reference(s)]", {
+                        let refs = torchless::parse_file_references(&user_input, &cwd);
+                        refs.len()
+                    })?;
+                }
+                expanded
+            } else {
+                user_input.clone()
+            };
+
             // Add user message to history
-            history.push(ChatMessage::user(&user_input));
+            history.push(ChatMessage::user(&effective_input));
 
             // Format the full conversation as a prompt
             let prompt_str = chat_template.format_prompt(&history);
@@ -1816,6 +2115,19 @@ pub(crate) fn run_chat_repl(
                 writeln!(output, "[stopped at EOS]")?;
             } else {
                 writeln!(output, "[stopped at max_tokens ({})]", config.max_tokens)?;
+            }
+        }
+
+        // Parse edit blocks from response when coding mode is active
+        if coding_mode {
+            let new_edits = parse_edit_blocks(&response_text);
+            if !new_edits.is_empty() {
+                writeln!(
+                    output,
+                    "[{} edit(s) proposed. Use /diff to review, /apply to apply.]",
+                    new_edits.len()
+                )?;
+                pending_edits.extend(new_edits);
             }
         }
 

@@ -11,6 +11,7 @@
 //! # Safety
 //! All functions in this module use unsafe intrinsics and require AVX-512F support.
 //! Callers must verify CPU support before calling these functions.
+#![allow(clippy::missing_safety_doc)]
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use std::arch::x86_64::*;

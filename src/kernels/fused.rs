@@ -12,6 +12,7 @@
 //! - Reduces memory bandwidth by 2-3x for fused operations
 //! - Better cache utilization
 //! - Fewer memory allocations
+#![allow(clippy::needless_range_loop)]
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut1};
 

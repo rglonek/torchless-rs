@@ -76,6 +76,7 @@ pub enum SafetensorsDtype {
     F64,
 }
 
+#[allow(clippy::should_implement_trait)]
 impl SafetensorsDtype {
     /// Parse dtype from string
     pub fn from_str(s: &str) -> Option<Self> {
@@ -482,10 +483,10 @@ impl SafetensorsLoader {
     /// Configuration is usually stored in a separate config.json file.
     /// This function attempts to infer some information from tensor shapes.
     pub fn to_unified_config(&self) -> UnifiedConfig {
-        let mut config = UnifiedConfig::default();
-
-        // Copy metadata
-        config.metadata = self.metadata.clone();
+        let mut config = UnifiedConfig {
+            metadata: self.metadata.clone(),
+            ..Default::default()
+        };
 
         // Try to infer architecture from metadata
         if let Some(arch) = self.metadata.get("model_type") {

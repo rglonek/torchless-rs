@@ -141,6 +141,8 @@ pub struct CacheState {
     // For now, we use a simpler approach where we track position and re-run if needed.
 }
 
+type ForwardFn<'a> = Box<dyn Fn(&mut InferenceState, u32) + 'a>;
+
 /// Speculative decoder that uses a draft model to accelerate generation.
 ///
 /// # Type Parameters
@@ -148,9 +150,9 @@ pub struct CacheState {
 /// * `M` - Main model type (larger, more accurate model)
 pub struct SpeculativeDecoder<'a> {
     /// Main model for verification
-    main_forward: Box<dyn Fn(&mut InferenceState, u32) + 'a>,
+    main_forward: ForwardFn<'a>,
     /// Draft model for speculation
-    draft_forward: Box<dyn Fn(&mut InferenceState, u32) + 'a>,
+    draft_forward: ForwardFn<'a>,
     /// Configuration
     config: SpeculativeConfig,
     /// Statistics
@@ -220,7 +222,7 @@ impl<'a> SpeculativeDecoder<'a> {
 
             // Get probabilities from draft model
             let probs = softmax_with_temperature(
-                &draft_state.logits.as_slice().unwrap(),
+                draft_state.logits.as_slice().unwrap(),
                 self.config.temperature,
             );
 
@@ -244,7 +246,7 @@ impl<'a> SpeculativeDecoder<'a> {
 
             // Get main model probabilities
             let main_probs = softmax_with_temperature(
-                &main_state.logits.as_slice().unwrap(),
+                main_state.logits.as_slice().unwrap(),
                 self.config.temperature,
             );
 
@@ -273,7 +275,7 @@ impl<'a> SpeculativeDecoder<'a> {
                 let adjusted_probs = adjust_distribution(
                     &main_probs,
                     &softmax_with_temperature(
-                        &draft_state.logits.as_slice().unwrap(),
+                        draft_state.logits.as_slice().unwrap(),
                         self.config.temperature,
                     ),
                 );
@@ -294,7 +296,7 @@ impl<'a> SpeculativeDecoder<'a> {
                 *accepted_tokens.last().unwrap_or(&context_token),
             );
             let main_probs = softmax_with_temperature(
-                &main_state.logits.as_slice().unwrap(),
+                main_state.logits.as_slice().unwrap(),
                 self.config.temperature,
             );
             let bonus_token = sample_from_probs(&main_probs, &mut rng);
@@ -334,7 +336,7 @@ impl<'a> SpeculativeDecoder<'a> {
 /// decoding, but requires only one model.
 pub struct SelfSpeculativeDecoder<'a> {
     /// Model forward function
-    forward: Box<dyn Fn(&mut InferenceState, u32) + 'a>,
+    forward: ForwardFn<'a>,
     /// Configuration
     config: SpeculativeConfig,
     /// Draft temperature (higher = faster but less accurate)
@@ -382,7 +384,7 @@ impl<'a> SelfSpeculativeDecoder<'a> {
             (self.forward)(state, current_token);
 
             let probs =
-                softmax_with_temperature(&state.logits.as_slice().unwrap(), self.draft_temperature);
+                softmax_with_temperature(state.logits.as_slice().unwrap(), self.draft_temperature);
             let next_token = sample_from_probs(&probs, &mut rng);
             let prob = probs[next_token as usize];
 
@@ -403,7 +405,7 @@ impl<'a> SelfSpeculativeDecoder<'a> {
             (self.forward)(state, current_token);
 
             let main_probs =
-                softmax_with_temperature(&state.logits.as_slice().unwrap(), self.main_temperature);
+                softmax_with_temperature(state.logits.as_slice().unwrap(), self.main_temperature);
             let draft_token = draft_tokens[i];
             let draft_prob = draft_probs[i];
             let main_prob = main_probs[draft_token as usize];
@@ -434,7 +436,7 @@ impl<'a> SelfSpeculativeDecoder<'a> {
         if accepted_tokens.len() == draft_tokens.len() {
             (self.forward)(state, *accepted_tokens.last().unwrap_or(&context_token));
             let main_probs =
-                softmax_with_temperature(&state.logits.as_slice().unwrap(), self.main_temperature);
+                softmax_with_temperature(state.logits.as_slice().unwrap(), self.main_temperature);
             let bonus_token = sample_from_probs(&main_probs, &mut rng);
             accepted_tokens.push(bonus_token);
             state.pos += 1;

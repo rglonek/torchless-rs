@@ -16,7 +16,7 @@
 //! use torchless::memory::{InferenceArena, AlignedBuffer, prefetch_read};
 //!
 //! // Create arena for inference session
-//! let arena = InferenceArena::with_capacity(1024 * 1024); // 1MB
+//! let mut arena = InferenceArena::with_capacity(1024 * 1024); // 1MB
 //!
 //! // Allocate aligned buffers from arena
 //! let buffer = arena.alloc_aligned::<f32>(4096);
@@ -262,7 +262,7 @@ impl InferenceArena {
     /// Allocate an aligned slice for SIMD operations.
     ///
     /// Returns a slice aligned to 64 bytes (cache line / AVX-512 boundary).
-    pub fn alloc_aligned<T: Default + Clone>(&self, len: usize) -> &mut [T] {
+    pub fn alloc_aligned<T: Default + Clone>(&mut self, len: usize) -> &mut [T] {
         // Allocate with extra space for alignment
         let align = SIMD_ALIGNMENT;
         let layout = std::alloc::Layout::from_size_align(len * std::mem::size_of::<T>(), align)

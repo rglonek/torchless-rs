@@ -43,7 +43,7 @@ pub enum DynamicModel<'a> {
     LazyQwen(LazyQwen<'a>),
 }
 
-impl<'a> DynamicModel<'a> {
+impl DynamicModel<'_> {
     /// Load model with automatic architecture detection
     pub fn load_auto(params: Parameters) -> Result<DynamicModel<'static>> {
         let tensor_names: Vec<String> = params.tensors.keys().cloned().collect();

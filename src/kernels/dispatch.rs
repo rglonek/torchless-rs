@@ -11,6 +11,7 @@
 //! # Usage
 //! The `Dispatcher` struct caches feature detection results and provides
 //! methods that automatically route to the best available implementation.
+#![allow(clippy::needless_range_loop)]
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut1};
 use std::sync::OnceLock;

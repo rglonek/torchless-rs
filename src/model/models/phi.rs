@@ -25,7 +25,7 @@
 
 use crate::kernels;
 use crate::loader::{Config, Parameters};
-use crate::model::architecture::{ActivationType, ArchitectureConfig, Model, ModelArchitecture};
+use crate::model::architecture::{ArchitectureConfig, Model, ModelArchitecture};
 use crate::model::LazyEmbedding;
 use crate::model::{Attention, Embedding, InferenceState};
 use anyhow::Result;
@@ -90,7 +90,7 @@ impl PhiMLP {
 
     /// GELU activation with tanh approximation
     fn gelu_tanh(x: f32) -> f32 {
-        let sqrt_2_over_pi = 0.7978845608028654;
+        let sqrt_2_over_pi = 0.797_884_6;
         let coeff = 0.044715;
         0.5 * x * (1.0 + (sqrt_2_over_pi * (x + coeff * x.powi(3))).tanh())
     }
@@ -616,7 +616,7 @@ impl<'a> LazyPhi<'a> {
     }
 }
 
-impl<'a> Model for LazyPhi<'a> {
+impl Model for LazyPhi<'_> {
     fn architecture(&self) -> ModelArchitecture {
         ModelArchitecture::Phi
     }

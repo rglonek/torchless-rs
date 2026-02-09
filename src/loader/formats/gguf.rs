@@ -18,6 +18,7 @@
 //! │ Metadata Key-Value Pairs                                        │
 //! │   - Key: string (length-prefixed)                               │
 //! │   - Value Type: uint32_t                                        │
+#![allow(clippy::needless_range_loop)]
 //! │   - Value: varies by type                                       │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │ Tensor Info Array                                               │
@@ -417,10 +418,8 @@ impl GGUFMetadata {
     /// Get vocabulary size
     pub fn vocab_size(&self) -> Option<u32> {
         // Try tokenizer vocab size first
-        if let Some(v) = self.kv.get("tokenizer.ggml.tokens") {
-            if let GGUFValue::Array(arr) = v {
-                return Some(arr.len() as u32);
-            }
+        if let Some(GGUFValue::Array(arr)) = self.kv.get("tokenizer.ggml.tokens") {
+            return Some(arr.len() as u32);
         }
         None
     }
@@ -525,7 +524,7 @@ impl GGUFLoader {
 
         // Read version
         let version = cursor.read_u32::<LittleEndian>()?;
-        if version < GGUF_VERSION_V1 || version > GGUF_VERSION_V3 {
+        if !(GGUF_VERSION_V1..=GGUF_VERSION_V3).contains(&version) {
             anyhow::bail!("Unsupported GGUF version: {}", version);
         }
 
@@ -802,7 +801,7 @@ impl GGUFLoader {
                             qs[byte_idx] >> 4
                         };
 
-                        let high_bit = ((qh[i / 8] >> (i % 8)) & 1) as u8;
+                        let high_bit = (qh[i / 8] >> (i % 8)) & 1;
                         let quant_val = nibble | (high_bit << 4);
                         let val = (quant_val as i8 - 16) as f32 * scale;
                         result.push(val);
@@ -834,7 +833,7 @@ impl GGUFLoader {
                             qs[byte_idx] >> 4
                         };
 
-                        let high_bit = ((qh[i / 8] >> (i % 8)) & 1) as u8;
+                        let high_bit = (qh[i / 8] >> (i % 8)) & 1;
                         let quant_val = nibble | (high_bit << 4);
                         result.push(quant_val as f32 * scale + min);
                     }
@@ -895,7 +894,7 @@ impl GGUFLoader {
                         } else {
                             ql_val >> 4
                         };
-                        let q_high = ((qh[h_idx] >> h_shift) & 0x03) as u8;
+                        let q_high = (qh[h_idx] >> h_shift) & 0x03;
                         let q = (q_low | (q_high << 4)) as i8 - 32;
 
                         let scale_idx = i / 16;
@@ -919,18 +918,19 @@ impl GGUFLoader {
 
     /// Convert to unified config
     pub fn to_unified_config(&self) -> UnifiedConfig {
-        let mut config = UnifiedConfig::default();
-
-        config.architecture = self.metadata.architecture().map(String::from);
-        config.hidden_size = self.metadata.embedding_length().map(|v| v as usize);
-        config.intermediate_size = self.metadata.feed_forward_length().map(|v| v as usize);
-        config.n_layers = self.metadata.block_count().map(|v| v as usize);
-        config.n_heads = self.metadata.head_count().map(|v| v as usize);
-        config.n_kv_heads = self.metadata.head_count_kv().map(|v| v as usize);
-        config.vocab_size = self.metadata.vocab_size().map(|v| v as usize);
-        config.max_position_embeddings = self.metadata.context_length().map(|v| v as usize);
-        config.rope_theta = self.metadata.rope_freq_base();
-        config.norm_eps = self.metadata.layer_norm_eps();
+        let mut config = UnifiedConfig {
+            architecture: self.metadata.architecture().map(String::from),
+            hidden_size: self.metadata.embedding_length().map(|v| v as usize),
+            intermediate_size: self.metadata.feed_forward_length().map(|v| v as usize),
+            n_layers: self.metadata.block_count().map(|v| v as usize),
+            n_heads: self.metadata.head_count().map(|v| v as usize),
+            n_kv_heads: self.metadata.head_count_kv().map(|v| v as usize),
+            vocab_size: self.metadata.vocab_size().map(|v| v as usize),
+            max_position_embeddings: self.metadata.context_length().map(|v| v as usize),
+            rope_theta: self.metadata.rope_freq_base(),
+            norm_eps: self.metadata.layer_norm_eps(),
+            ..Default::default()
+        };
 
         // Add quantization info
         if let Some(file_type) = self.metadata.file_type() {

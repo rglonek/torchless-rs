@@ -25,9 +25,7 @@
 
 use crate::kernels;
 use crate::loader::{Config, Parameters};
-use crate::model::architecture::{
-    ActivationType, ArchitectureConfig, Model, ModelArchitecture, TensorNamePattern,
-};
+use crate::model::architecture::{ArchitectureConfig, Model, ModelArchitecture, TensorNamePattern};
 use crate::model::{Attention, Embedding, InferenceState};
 use crate::model::{LazyAttention, LazyEmbedding, LazyMLP};
 use anyhow::Result;
@@ -84,7 +82,7 @@ impl GemmaMLP {
     /// GELU activation (tanh approximation)
     /// Uses the formula: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
     fn gelu(x: f32) -> f32 {
-        let sqrt_2_over_pi = 0.7978845608028654;
+        let sqrt_2_over_pi = 0.797_884_6;
         let coeff = 0.044715;
         0.5 * x * (1.0 + (sqrt_2_over_pi * (x + coeff * x.powi(3))).tanh())
     }
@@ -614,7 +612,7 @@ impl<'a> LazyGemma<'a> {
     }
 }
 
-impl<'a> Model for LazyGemma<'a> {
+impl Model for LazyGemma<'_> {
     fn architecture(&self) -> ModelArchitecture {
         ModelArchitecture::Gemma
     }

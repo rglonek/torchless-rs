@@ -16,6 +16,7 @@
 //! # References
 //! - FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness
 //!   (Dao et al., 2022)
+#![allow(clippy::needless_range_loop)]
 
 use ndarray::{Array2, ArrayView2};
 
@@ -381,6 +382,7 @@ pub fn flash_attention_parallel(
 /// * `config` - Flash attention configuration
 /// * `scores_buffer` - Pre-allocated scores buffer [tile_size]
 /// * `values_buffer` - Pre-allocated values buffer [tile_size * head_dim]
+#[allow(clippy::too_many_arguments)]
 pub fn flash_attention_into(
     query: &[f32],
     k_cache: ArrayView2<f32>,

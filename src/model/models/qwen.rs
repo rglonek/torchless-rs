@@ -22,6 +22,7 @@
 //! let mut state = InferenceState::new(model.config.clone());
 //! model.forward(&mut state, token, false);
 //! ```
+#![allow(clippy::needless_range_loop)]
 
 use crate::kernels;
 use crate::loader::{Config, Parameters};
@@ -798,7 +799,7 @@ impl<'a> LazyQwen<'a> {
     }
 }
 
-impl<'a> Model for LazyQwen<'a> {
+impl Model for LazyQwen<'_> {
     fn architecture(&self) -> ModelArchitecture {
         ModelArchitecture::Qwen
     }

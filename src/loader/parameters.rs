@@ -32,6 +32,7 @@ pub enum TensorDtype {
     Q4_K_S,
 }
 
+#[allow(clippy::should_implement_trait)]
 impl TensorDtype {
     /// Parse dtype from string representation
     pub fn from_str(s: &str) -> Option<Self> {

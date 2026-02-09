@@ -46,6 +46,7 @@ impl std::fmt::Display for ModelArchitecture {
     }
 }
 
+#[allow(clippy::should_implement_trait)]
 impl ModelArchitecture {
     /// Parse architecture from string (case-insensitive)
     pub fn from_str(s: &str) -> Self {

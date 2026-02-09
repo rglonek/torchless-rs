@@ -245,7 +245,7 @@ impl KVCachePool {
 
     /// Check if there are enough free blocks for a sequence of given length.
     pub fn can_allocate(&self, token_count: usize) -> bool {
-        let blocks_needed = (token_count + self.block_size - 1) / self.block_size;
+        let blocks_needed = token_count.div_ceil(self.block_size);
         self.free_block_count() >= blocks_needed * self.n_layers
     }
 

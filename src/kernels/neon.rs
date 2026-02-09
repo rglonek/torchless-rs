@@ -11,6 +11,7 @@
 //! # Safety
 //! All functions in this module use unsafe intrinsics and require NEON support.
 //! On aarch64, NEON is always available, so no runtime check is needed.
+#![allow(clippy::missing_safety_doc)]
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::*;

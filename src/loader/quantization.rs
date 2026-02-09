@@ -661,6 +661,7 @@ pub enum QuantFormat {
     Q4_K_S,
 }
 
+#[allow(clippy::should_implement_trait)]
 impl QuantFormat {
     /// Returns bytes per element (approximate for sub-byte formats)
     pub fn bytes_per_element(&self) -> f32 {

@@ -159,6 +159,7 @@ pub struct UnifiedModelData {
     inner: ModelDataInner,
 }
 
+#[allow(clippy::upper_case_acronyms)]
 enum ModelDataInner {
     Torchless(super::Parameters),
     GGUF(gguf::GGUFLoader),
@@ -176,7 +177,7 @@ impl std::fmt::Debug for ModelDataInner {
 }
 
 /// Unified model configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UnifiedConfig {
     /// Model architecture (e.g., "llama", "mistral", "phi")
     pub architecture: Option<String>,
@@ -202,25 +203,6 @@ pub struct UnifiedConfig {
     pub quantization: Option<String>,
     /// Additional metadata as key-value pairs
     pub metadata: std::collections::HashMap<String, String>,
-}
-
-impl Default for UnifiedConfig {
-    fn default() -> Self {
-        Self {
-            architecture: None,
-            hidden_size: None,
-            intermediate_size: None,
-            n_layers: None,
-            n_heads: None,
-            n_kv_heads: None,
-            vocab_size: None,
-            max_position_embeddings: None,
-            rope_theta: None,
-            norm_eps: None,
-            quantization: None,
-            metadata: std::collections::HashMap::new(),
-        }
-    }
 }
 
 impl UnifiedModelData {
@@ -252,7 +234,7 @@ impl UnifiedModelData {
 
     /// Create from GGUF loader
     fn from_gguf(loader: gguf::GGUFLoader) -> Self {
-        let tensor_names: Vec<String> = loader.tensor_names().iter().cloned().collect();
+        let tensor_names: Vec<String> = loader.tensor_names().to_vec();
         let config = loader.to_unified_config();
 
         Self {
@@ -265,7 +247,7 @@ impl UnifiedModelData {
 
     /// Create from Safetensors loader
     fn from_safetensors(loader: safetensors::SafetensorsLoader) -> Self {
-        let tensor_names: Vec<String> = loader.tensor_names().iter().cloned().collect();
+        let tensor_names: Vec<String> = loader.tensor_names().to_vec();
         let config = loader.to_unified_config();
 
         Self {

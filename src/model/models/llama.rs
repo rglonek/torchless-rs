@@ -156,6 +156,7 @@ impl LLaMA {
     }
 
     /// Compute scaled RoPE frequencies for extended context
+    #[allow(dead_code)]
     fn compute_scaled_rope_freqs(&self, head_dim: usize, pos: usize) -> (Array1<f32>, Array1<f32>) {
         let base_freq = kernels::init_rope_freqs(head_dim, self.config.rope_theta);
 
@@ -412,7 +413,7 @@ impl<'a> LazyLLaMA<'a> {
     }
 }
 
-impl<'a> Model for LazyLLaMA<'a> {
+impl Model for LazyLLaMA<'_> {
     fn architecture(&self) -> ModelArchitecture {
         ModelArchitecture::LLaMA
     }

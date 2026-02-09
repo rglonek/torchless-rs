@@ -744,6 +744,7 @@ pub fn estimate_kv_cache_memory(
 }
 
 /// Estimate total inference memory requirements.
+#[allow(clippy::too_many_arguments)]
 pub fn estimate_inference_memory(
     hidden_size: usize,
     intermediate_size: usize,

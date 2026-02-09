@@ -306,7 +306,7 @@ impl ArenaInferenceState {
     /// This is very fast (O(1)) and the memory is automatically reclaimed
     /// when `reset_arena()` is called.
     #[inline]
-    pub fn temp_slice(&self, len: usize) -> &mut [f32] {
+    pub fn temp_slice(&mut self, len: usize) -> &mut [f32] {
         self.arena.alloc_aligned::<f32>(len)
     }
 

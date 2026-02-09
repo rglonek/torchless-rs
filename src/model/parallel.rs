@@ -20,6 +20,7 @@
 //! ```
 
 use crate::kernels;
+use crate::loader::weight_matrix::WeightMatrix;
 use crate::loader::{Config, Parameters};
 use anyhow::Result;
 use ndarray::{s, Array1, Array2, ArrayView2};
@@ -633,10 +634,10 @@ impl PipelineParallelMistral {
         let embed_shape = params
             .get_tensor_shape("model.embed_tokens.weight")
             .unwrap();
-        let embedding = Embedding::new(Array2::from_shape_vec(
+        let embedding = Embedding::new(WeightMatrix::F32(Array2::from_shape_vec(
             (embed_shape[0], embed_shape[1]),
             embed_data,
-        )?);
+        )?));
 
         // Load final norm
         eprintln!("Loading final norm...");
@@ -806,10 +807,10 @@ impl TensorParallelMistral {
         let embed_shape = params
             .get_tensor_shape("model.embed_tokens.weight")
             .unwrap();
-        let embedding = Embedding::new(Array2::from_shape_vec(
+        let embedding = Embedding::new(WeightMatrix::F32(Array2::from_shape_vec(
             (embed_shape[0], embed_shape[1]),
             embed_data,
-        )?);
+        )?));
 
         // Load final norm (replicated)
         let norm_data = params.get_tensor("model.norm.weight")?;

@@ -16,6 +16,9 @@
 //! - `elementwise_add_kernel`: Element-wise addition
 
 /// WGSL source code for all compute kernels.
+///
+/// Each kernel's global bindings are prefixed with a unique kernel abbreviation
+/// to avoid name collisions, since all kernels share a single WGSL module.
 pub const WGSL_SHADERS_SOURCE: &str = r#"
 // =============================================================================
 // RMSNorm Kernel
@@ -28,47 +31,47 @@ struct RMSNormParams {
     eps: f32,
 }
 
-@group(0) @binding(0) var<storage, read_write> x: array<f32>;
-@group(0) @binding(1) var<storage, read> weight: array<f32>;
-@group(0) @binding(2) var<uniform> params: RMSNormParams;
+@group(0) @binding(0) var<storage, read_write> rms_x: array<f32>;
+@group(0) @binding(1) var<storage, read> rms_weight: array<f32>;
+@group(0) @binding(2) var<uniform> rms_params: RMSNormParams;
 
-var<workgroup> wg_shared: array<f32, 256>;
+var<workgroup> rms_shared: array<f32, 256>;
 
 @compute @workgroup_size(256)
 fn rmsnorm_kernel(@builtin(local_invocation_index) tid: u32) {
     let block_size = 256u;
-    let n = params.n;
+    let n = rms_params.n;
     
     // Compute sum of squares in parallel
     var local_sum: f32 = 0.0;
     var i: u32 = tid;
     while (i < n) {
-        let val = x[i];
+        let val = rms_x[i];
         local_sum += val * val;
         i += block_size;
     }
     
-    wg_shared[tid] = local_sum;
+    rms_shared[tid] = local_sum;
     workgroupBarrier();
     
     // Parallel reduction for sum
     var stride: u32 = block_size / 2u;
     while (stride > 0u) {
         if (tid < stride) {
-            wg_shared[tid] += wg_shared[tid + stride];
+            rms_shared[tid] += rms_shared[tid + stride];
         }
         workgroupBarrier();
         stride = stride / 2u;
     }
     
-    let rms = sqrt(wg_shared[0u] / f32(n) + params.eps);
+    let rms = sqrt(rms_shared[0u] / f32(n) + rms_params.eps);
     let inv_rms = 1.0 / rms;
     workgroupBarrier();
     
     // Apply normalization and weight
     i = tid;
     while (i < n) {
-        x[i] = x[i] * inv_rms * weight[i];
+        rms_x[i] = rms_x[i] * inv_rms * rms_weight[i];
         i += block_size;
     }
 }
@@ -83,69 +86,69 @@ struct SoftmaxParams {
     n: u32,
 }
 
-@group(0) @binding(0) var<storage, read_write> x: array<f32>;
-@group(0) @binding(1) var<uniform> params: SoftmaxParams;
+@group(0) @binding(0) var<storage, read_write> sm_x: array<f32>;
+@group(0) @binding(1) var<uniform> sm_params: SoftmaxParams;
 
 // Shared memory: first 256 for max, second 256 for sum
-var<workgroup> max_shared: array<f32, 256>;
-var<workgroup> sum_shared: array<f32, 256>;
+var<workgroup> sm_max_shared: array<f32, 256>;
+var<workgroup> sm_sum_shared: array<f32, 256>;
 
 @compute @workgroup_size(256)
 fn softmax_kernel(@builtin(local_invocation_index) tid: u32) {
     let block_size = 256u;
-    let n = params.n;
+    let n = sm_params.n;
     
     // Find max in parallel
     var local_max: f32 = -3.402823e+38;  // -INF
     var i: u32 = tid;
     while (i < n) {
-        local_max = max(local_max, x[i]);
+        local_max = max(local_max, sm_x[i]);
         i += block_size;
     }
-    max_shared[tid] = local_max;
+    sm_max_shared[tid] = local_max;
     workgroupBarrier();
     
     // Parallel reduction for max
     var stride: u32 = block_size / 2u;
     while (stride > 0u) {
         if (tid < stride) {
-            max_shared[tid] = max(max_shared[tid], max_shared[tid + stride]);
+            sm_max_shared[tid] = max(sm_max_shared[tid], sm_max_shared[tid + stride]);
         }
         workgroupBarrier();
         stride = stride / 2u;
     }
-    let max_val = max_shared[0u];
+    let max_val = sm_max_shared[0u];
     workgroupBarrier();
     
     // Compute exp(x - max) and sum
     var local_sum: f32 = 0.0;
     i = tid;
     while (i < n) {
-        let exp_val = exp(x[i] - max_val);
-        x[i] = exp_val;
+        let exp_val = exp(sm_x[i] - max_val);
+        sm_x[i] = exp_val;
         local_sum += exp_val;
         i += block_size;
     }
-    sum_shared[tid] = local_sum;
+    sm_sum_shared[tid] = local_sum;
     workgroupBarrier();
     
     // Parallel reduction for sum
     stride = block_size / 2u;
     while (stride > 0u) {
         if (tid < stride) {
-            sum_shared[tid] += sum_shared[tid + stride];
+            sm_sum_shared[tid] += sm_sum_shared[tid + stride];
         }
         workgroupBarrier();
         stride = stride / 2u;
     }
-    let sum_val = sum_shared[0u];
+    let sum_val = sm_sum_shared[0u];
     let inv_sum = 1.0 / sum_val;
     workgroupBarrier();
     
     // Normalize
     i = tid;
     while (i < n) {
-        x[i] *= inv_sum;
+        sm_x[i] *= inv_sum;
         i += block_size;
     }
 }
@@ -159,16 +162,16 @@ struct SiluParams {
     n: u32,
 }
 
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read_write> y: array<f32>;
-@group(0) @binding(2) var<uniform> params: SiluParams;
+@group(0) @binding(0) var<storage, read> silu_x: array<f32>;
+@group(0) @binding(1) var<storage, read_write> silu_y: array<f32>;
+@group(0) @binding(2) var<uniform> silu_params: SiluParams;
 
 @compute @workgroup_size(256)
 fn silu_kernel(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
-    if (idx < params.n) {
-        let val = x[idx];
-        y[idx] = val / (1.0 + exp(-val));
+    if (idx < silu_params.n) {
+        let val = silu_x[idx];
+        silu_y[idx] = val / (1.0 + exp(-val));
     }
 }
 
@@ -184,27 +187,27 @@ struct RopeParams {
     half_dim: u32,
 }
 
-@group(0) @binding(0) var<storage, read_write> x: array<f32>;
-@group(0) @binding(1) var<storage, read> cos_table: array<f32>;
-@group(0) @binding(2) var<storage, read> sin_table: array<f32>;
-@group(0) @binding(3) var<uniform> params: RopeParams;
+@group(0) @binding(0) var<storage, read_write> rope_x: array<f32>;
+@group(0) @binding(1) var<storage, read> rope_cos_table: array<f32>;
+@group(0) @binding(2) var<storage, read> rope_sin_table: array<f32>;
+@group(0) @binding(3) var<uniform> rope_params: RopeParams;
 
 @compute @workgroup_size(256)
 fn rope_kernel(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
-    let total = params.n_heads * params.half_dim;
+    let total = rope_params.n_heads * rope_params.half_dim;
     if (idx < total) {
-        let h = idx / params.half_dim;
-        let i = idx % params.half_dim;
+        let h = idx / rope_params.half_dim;
+        let i = idx % rope_params.half_dim;
         
-        let base = h * params.head_dim;
-        let xi = x[base + i];
-        let yi = x[base + i + params.half_dim];
-        let c = cos_table[i];
-        let s = sin_table[i];
+        let base = h * rope_params.head_dim;
+        let xi = rope_x[base + i];
+        let yi = rope_x[base + i + rope_params.half_dim];
+        let c = rope_cos_table[i];
+        let s = rope_sin_table[i];
         
-        x[base + i] = xi * c - yi * s;
-        x[base + i + params.half_dim] = xi * s + yi * c;
+        rope_x[base + i] = xi * c - yi * s;
+        rope_x[base + i + rope_params.half_dim] = xi * s + yi * c;
     }
 }
 
@@ -220,21 +223,21 @@ struct AttentionScoresParams {
     scale: f32,
 }
 
-@group(0) @binding(0) var<storage, read> query: array<f32>;
-@group(0) @binding(1) var<storage, read> keys: array<f32>;
-@group(0) @binding(2) var<storage, read_write> scores: array<f32>;
-@group(0) @binding(3) var<uniform> params: AttentionScoresParams;
+@group(0) @binding(0) var<storage, read> attn_query: array<f32>;
+@group(0) @binding(1) var<storage, read> attn_keys: array<f32>;
+@group(0) @binding(2) var<storage, read_write> attn_scores: array<f32>;
+@group(0) @binding(3) var<uniform> attn_params: AttentionScoresParams;
 
 @compute @workgroup_size(256)
 fn attention_scores_kernel(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x;
-    if (i < params.seq_len) {
+    if (i < attn_params.seq_len) {
         var dot: f32 = 0.0;
-        let key_offset = i * params.head_dim;
-        for (var j = 0u; j < params.head_dim; j++) {
-            dot += query[j] * keys[key_offset + j];
+        let key_offset = i * attn_params.head_dim;
+        for (var j = 0u; j < attn_params.head_dim; j++) {
+            dot += attn_query[j] * attn_keys[key_offset + j];
         }
-        scores[i] = dot * params.scale;
+        attn_scores[i] = dot * attn_params.scale;
     }
 }
 
@@ -249,20 +252,20 @@ struct WeightedSumParams {
     d: u32,
 }
 
-@group(0) @binding(0) var<storage, read> weights: array<f32>;
-@group(0) @binding(1) var<storage, read> matrix: array<f32>;
-@group(0) @binding(2) var<storage, read_write> out: array<f32>;
-@group(0) @binding(3) var<uniform> params: WeightedSumParams;
+@group(0) @binding(0) var<storage, read> ws_weights: array<f32>;
+@group(0) @binding(1) var<storage, read> ws_matrix: array<f32>;
+@group(0) @binding(2) var<storage, read_write> ws_out: array<f32>;
+@group(0) @binding(3) var<uniform> ws_params: WeightedSumParams;
 
 @compute @workgroup_size(256)
 fn weighted_sum_kernel(@builtin(global_invocation_id) gid: vec3<u32>) {
     let j = gid.x;
-    if (j < params.d) {
+    if (j < ws_params.d) {
         var sum: f32 = 0.0;
-        for (var i = 0u; i < params.n; i++) {
-            sum += weights[i] * matrix[i * params.d + j];
+        for (var i = 0u; i < ws_params.n; i++) {
+            sum += ws_weights[i] * ws_matrix[i * ws_params.d + j];
         }
-        out[j] = sum;
+        ws_out[j] = sum;
     }
 }
 
@@ -277,21 +280,21 @@ struct MatmulVecParams {
     cols: u32,
 }
 
-@group(0) @binding(0) var<storage, read> weights: array<f32>;
-@group(0) @binding(1) var<storage, read> x: array<f32>;
-@group(0) @binding(2) var<storage, read_write> out: array<f32>;
-@group(0) @binding(3) var<uniform> params: MatmulVecParams;
+@group(0) @binding(0) var<storage, read> mv_weights: array<f32>;
+@group(0) @binding(1) var<storage, read> mv_x: array<f32>;
+@group(0) @binding(2) var<storage, read_write> mv_out: array<f32>;
+@group(0) @binding(3) var<uniform> mv_params: MatmulVecParams;
 
 @compute @workgroup_size(256)
 fn matmul_vec_kernel(@builtin(global_invocation_id) gid: vec3<u32>) {
     let row = gid.x;
-    if (row < params.rows) {
+    if (row < mv_params.rows) {
         var sum: f32 = 0.0;
-        let w_offset = row * params.cols;
-        for (var j = 0u; j < params.cols; j++) {
-            sum += weights[w_offset + j] * x[j];
+        let w_offset = row * mv_params.cols;
+        for (var j = 0u; j < mv_params.cols; j++) {
+            sum += mv_weights[w_offset + j] * mv_x[j];
         }
-        out[row] = sum;
+        mv_out[row] = sum;
     }
 }
 
@@ -303,24 +306,24 @@ struct ElementwiseParams {
     n: u32,
 }
 
-@group(0) @binding(0) var<storage, read> a: array<f32>;
-@group(0) @binding(1) var<storage, read> b: array<f32>;
-@group(0) @binding(2) var<storage, read_write> c: array<f32>;
-@group(0) @binding(3) var<uniform> params: ElementwiseParams;
+@group(0) @binding(0) var<storage, read> ew_a: array<f32>;
+@group(0) @binding(1) var<storage, read> ew_b: array<f32>;
+@group(0) @binding(2) var<storage, read_write> ew_c: array<f32>;
+@group(0) @binding(3) var<uniform> ew_params: ElementwiseParams;
 
 @compute @workgroup_size(256)
 fn elementwise_mul_kernel(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
-    if (idx < params.n) {
-        c[idx] = a[idx] * b[idx];
+    if (idx < ew_params.n) {
+        ew_c[idx] = ew_a[idx] * ew_b[idx];
     }
 }
 
 @compute @workgroup_size(256)
 fn elementwise_add_kernel(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
-    if (idx < params.n) {
-        c[idx] = a[idx] + b[idx];
+    if (idx < ew_params.n) {
+        ew_c[idx] = ew_a[idx] + ew_b[idx];
     }
 }
 "#;

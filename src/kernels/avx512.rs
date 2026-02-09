@@ -13,7 +13,7 @@
 //! Callers must verify CPU support before calling these functions.
 #![allow(clippy::missing_safety_doc)]
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
 /// Check if AVX-512F is available at runtime.
@@ -32,7 +32,7 @@ pub fn is_avx512_available() -> bool {
 ///
 /// # Safety
 /// Requires AVX-512F support. Caller must verify with `is_avx512_available()`.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 pub unsafe fn matmul_vec_avx512(
     weights: &[f32],
@@ -79,7 +79,7 @@ pub unsafe fn matmul_vec_avx512(
 ///
 /// # Safety
 /// Requires AVX-512F support. Caller must verify with `is_avx512_available()`.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 pub unsafe fn rmsnorm_avx512(x: &mut [f32], weight: &[f32], eps: f32) {
     debug_assert_eq!(x.len(), weight.len());
@@ -135,7 +135,7 @@ pub unsafe fn rmsnorm_avx512(x: &mut [f32], weight: &[f32], eps: f32) {
 ///
 /// # Safety
 /// Requires AVX-512F support. Caller must verify with `is_avx512_available()`.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 pub unsafe fn softmax_avx512(x: &mut [f32]) {
     let n = x.len();
@@ -211,7 +211,7 @@ pub unsafe fn softmax_avx512(x: &mut [f32]) {
 ///
 /// # Safety
 /// Requires AVX-512F support. Caller must verify with `is_avx512_available()`.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 pub unsafe fn silu_avx512(input: &[f32], output: &mut [f32]) {
     debug_assert_eq!(input.len(), output.len());
@@ -220,7 +220,7 @@ pub unsafe fn silu_avx512(input: &[f32], output: &mut [f32]) {
     let x_ptr = input.as_ptr();
     let out_ptr = output.as_mut_ptr();
 
-    let one = _mm512_set1_ps(1.0);
+    let _one = _mm512_set1_ps(1.0);
 
     let mut i = 0;
     while i + 16 <= n {
@@ -252,7 +252,7 @@ pub unsafe fn silu_avx512(input: &[f32], output: &mut [f32]) {
 ///
 /// # Safety
 /// Requires AVX-512F support. Caller must verify with `is_avx512_available()`.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 pub unsafe fn apply_rope_avx512(
     x: &mut [f32],
@@ -310,7 +310,7 @@ pub unsafe fn apply_rope_avx512(
 ///
 /// # Safety
 /// Requires AVX-512F support. Caller must verify with `is_avx512_available()`.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 pub unsafe fn dot_product_avx512(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
@@ -345,7 +345,7 @@ pub unsafe fn dot_product_avx512(a: &[f32], b: &[f32]) -> f32 {
 ///
 /// # Safety
 /// Requires AVX-512F support. Caller must verify with `is_avx512_available()`.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 pub unsafe fn compute_attention_scores_avx512(
     query: &[f32],
@@ -362,7 +362,7 @@ pub unsafe fn compute_attention_scores_avx512(
     let q_ptr = query.as_ptr();
     let k_ptr = keys.as_ptr();
     let s_ptr = scores.as_mut_ptr();
-    let scale_vec = _mm512_set1_ps(scale);
+    let _scale_vec = _mm512_set1_ps(scale);
 
     for i in 0..n_keys {
         let key_offset = i * key_dim;
@@ -393,7 +393,7 @@ pub unsafe fn compute_attention_scores_avx512(
 ///
 /// # Safety
 /// Requires AVX-512F support. Caller must verify with `is_avx512_available()`.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 pub unsafe fn weighted_sum_rows_avx512(
     weights: &[f32],
@@ -445,7 +445,7 @@ pub unsafe fn weighted_sum_rows_avx512(
 }
 
 // Stub implementations for non-AVX512 targets
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn matmul_vec_avx512(
     _weights: &[f32],
     _input: &[f32],
@@ -456,22 +456,22 @@ pub unsafe fn matmul_vec_avx512(
     panic!("AVX-512 not available - check is_avx512_available() before calling");
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn rmsnorm_avx512(_x: &mut [f32], _weight: &[f32], _eps: f32) {
     panic!("AVX-512 not available - check is_avx512_available() before calling");
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn softmax_avx512(_x: &mut [f32]) {
     panic!("AVX-512 not available - check is_avx512_available() before calling");
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn silu_avx512(_input: &[f32], _output: &mut [f32]) {
     panic!("AVX-512 not available - check is_avx512_available() before calling");
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn apply_rope_avx512(
     _x: &mut [f32],
     _cos: &[f32],
@@ -482,12 +482,12 @@ pub unsafe fn apply_rope_avx512(
     panic!("AVX-512 not available - check is_avx512_available() before calling");
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn dot_product_avx512(_a: &[f32], _b: &[f32]) -> f32 {
     panic!("AVX-512 not available - check is_avx512_available() before calling");
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn compute_attention_scores_avx512(
     _query: &[f32],
     _keys: &[f32],
@@ -499,7 +499,7 @@ pub unsafe fn compute_attention_scores_avx512(
     panic!("AVX-512 not available - check is_avx512_available() before calling");
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn weighted_sum_rows_avx512(
     _weights: &[f32],
     _matrix: &[f32],
@@ -520,7 +520,7 @@ mod tests {
         let _available = is_avx512_available();
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[cfg(target_arch = "x86_64")]
     mod avx512_tests {
         use super::*;
 

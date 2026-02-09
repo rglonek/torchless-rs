@@ -5,6 +5,7 @@ mod tests;
 
 const METASPACE: &str = "▁";
 const BOS_TOKEN: &str = "<s>";
+const EOS_TOKEN: &str = "</s>";
 
 #[derive(Clone)]
 pub struct Tokenizer {
@@ -191,6 +192,71 @@ impl Tokenizer {
     /// Post-process Mistral decoding: replace ▁ with spaces
     fn decode_mistral(&self, s: &str) -> String {
         s.replace(METASPACE, " ")
+    }
+
+    /// Look up the token ID for a special token string (e.g. `</s>`, `<|end|>`).
+    ///
+    /// Returns `None` if the token is not in the vocabulary.
+    pub fn token_id(&self, token: &str) -> Option<u32> {
+        self.token_to_id.get(token).copied()
+    }
+
+    /// Get the EOS (`</s>`) token ID, if present in the vocabulary.
+    pub fn eos_id(&self) -> Option<u32> {
+        self.token_to_id.get(EOS_TOKEN).copied()
+    }
+
+    /// Get the BOS (`<s>`) token ID, if present in the vocabulary.
+    pub fn bos_id(&self) -> Option<u32> {
+        self.token_to_id.get(BOS_TOKEN).copied()
+    }
+
+    /// Encode text into token IDs using BPE, without prepending BOS.
+    ///
+    /// Use this when the chat template already handles BOS positioning.
+    pub fn encode_no_bos(&self, text: &str) -> Vec<u32> {
+        // Pre-tokenization
+        let text = self.pre_tokenize_mistral(text);
+
+        // Convert UTF-8 text to initial tokens
+        let mut tokens = Vec::new();
+        let bytes = text.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            let b0 = bytes[i];
+
+            let len = if (b0 & 0x80) == 0x00 {
+                1
+            } else if (b0 & 0xE0) == 0xC0 {
+                2
+            } else if (b0 & 0xF0) == 0xE0 {
+                3
+            } else if (b0 & 0xF8) == 0xF0 {
+                4
+            } else {
+                1
+            };
+
+            let char_str = std::str::from_utf8(&bytes[i..i + len])
+                .unwrap_or_else(|_| std::str::from_utf8(&bytes[i..i + 1]).unwrap_or(""));
+
+            let ids = self.get_id(char_str);
+            tokens.extend(ids);
+            i += len;
+        }
+
+        // Apply BPE merges
+        while let Some(packed) = self.get_lowest_pair(&tokens) {
+            let (left, right) = Self::unpack(packed);
+            if let Some(&merged) = self.merge_to_id.get(&packed) {
+                tokens = self.merge(&tokens, left, right, merged);
+            } else {
+                break;
+            }
+        }
+
+        tokens
     }
 
     /// Decode token IDs back into text

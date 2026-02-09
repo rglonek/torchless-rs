@@ -58,8 +58,8 @@ fn test_inference_state_base_size() {
 // Memory estimation tests
 // =============================================================================
 
-/// Calculate expected memory usage for InferenceState given a config
-fn estimate_inference_state_memory(config: &Config) -> usize {
+/// Calculate expected memory usage for InferenceState given a config and seq len
+fn estimate_inference_state_memory(config: &Config, max_seq_len: usize) -> usize {
     let head_dim = config.hidden_size / config.n_heads;
 
     let mut total = 0usize;
@@ -81,11 +81,10 @@ fn estimate_inference_state_memory(config: &Config) -> usize {
     total += config.n_kv_heads * head_dim * size_of::<f32>(); // v_state
 
     // KV cache: 2 * n_layers * n_kv_heads * max_seq_len * head_dim
-    const MAX_SEQ_LEN: usize = 500;
-    total += 2 * config.n_layers * config.n_kv_heads * MAX_SEQ_LEN * head_dim * size_of::<f32>();
+    total += 2 * config.n_layers * config.n_kv_heads * max_seq_len * head_dim * size_of::<f32>();
 
     // Attention outputs: scores, context, context_flat
-    total += config.n_heads * MAX_SEQ_LEN * size_of::<f32>(); // scores
+    total += config.n_heads * max_seq_len * size_of::<f32>(); // scores
     total += config.n_heads * head_dim * size_of::<f32>(); // context
     total += config.hidden_size * size_of::<f32>(); // context_flat
 
@@ -102,16 +101,17 @@ fn estimate_inference_state_memory(config: &Config) -> usize {
 fn test_inference_state_memory_estimate() {
     let params = Parameters::load("tests/fixtures/test_model.bin").unwrap();
     let config = params.config.clone();
+    const TEST_SEQ_LEN: usize = 500;
 
-    let estimated = estimate_inference_state_memory(&config);
+    let estimated = estimate_inference_state_memory(&config, TEST_SEQ_LEN);
     println!(
         "Estimated InferenceState memory: {} bytes ({:.2} MB)",
         estimated,
         estimated as f64 / 1024.0 / 1024.0
     );
 
-    // Create the actual state and verify it's roughly as expected
-    let state = InferenceState::new(config.clone());
+    // Create the actual state with a known seq len and verify it's roughly as expected
+    let state = InferenceState::with_seq_len(config.clone(), TEST_SEQ_LEN);
 
     // Count actual array elements
     let mut actual_elements = 0usize;
@@ -314,11 +314,11 @@ fn test_kv_cache_memory() {
     let params = Parameters::load("tests/fixtures/test_model.bin").unwrap();
     let config = params.config.clone();
     let head_dim = config.hidden_size / config.n_heads;
-    const MAX_SEQ_LEN: usize = 500;
+    const TEST_SEQ_LEN: usize = 500;
 
     // KV cache: 2 tensors of shape [n_layers, n_kv_heads, max_seq_len, head_dim]
     let kv_cache_size =
-        2 * config.n_layers * config.n_kv_heads * MAX_SEQ_LEN * head_dim * size_of::<f32>();
+        2 * config.n_layers * config.n_kv_heads * TEST_SEQ_LEN * head_dim * size_of::<f32>();
 
     println!(
         "KV cache size: {} bytes ({:.2} MB)",
@@ -326,8 +326,8 @@ fn test_kv_cache_memory() {
         kv_cache_size as f64 / 1024.0 / 1024.0
     );
 
-    // Create state and verify KV cache sizes
-    let state = InferenceState::new(config.clone());
+    // Create state with a known seq len and verify KV cache sizes
+    let state = InferenceState::with_seq_len(config.clone(), TEST_SEQ_LEN);
     let actual_k_cache = state.k_cache.len() * size_of::<f32>();
     let actual_v_cache = state.v_cache.len() * size_of::<f32>();
 
@@ -339,10 +339,10 @@ fn test_kv_cache_memory() {
 
     // For a real model, print what this would be:
     // Mistral-7B: n_layers=32, n_kv_heads=8, head_dim=128
-    let real_kv_cache = 2 * 32 * 8 * MAX_SEQ_LEN * 128 * size_of::<f32>();
+    let real_kv_cache = 2 * 32 * 8 * TEST_SEQ_LEN * 128 * size_of::<f32>();
     println!(
         "Real Mistral-7B KV cache (seq_len={}): {:.2} MB",
-        MAX_SEQ_LEN,
+        TEST_SEQ_LEN,
         real_kv_cache as f64 / 1024.0 / 1024.0
     );
 }

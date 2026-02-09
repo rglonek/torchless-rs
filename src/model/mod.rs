@@ -73,11 +73,13 @@ pub use parallel::{
     PipelineParallelMistral, TensorParallelMistral,
 };
 
-const MAX_SEQ_LEN: usize = 500;
+/// Default maximum sequence length if not specified.
+const DEFAULT_MAX_SEQ_LEN: usize = 2048;
 
 pub struct InferenceState {
     pub config: Config,
     pub pos: usize,
+    pub max_seq_len: usize,
 
     // Hidden state and residual
     pub hidden_state: Array1<f32>,
@@ -119,7 +121,13 @@ pub struct InferenceState {
 }
 
 impl InferenceState {
+    /// Create a new inference state with the default max sequence length.
     pub fn new(config: Config) -> Self {
+        Self::with_seq_len(config, DEFAULT_MAX_SEQ_LEN)
+    }
+
+    /// Create a new inference state with a custom max sequence length.
+    pub fn with_seq_len(config: Config, max_seq_len: usize) -> Self {
         let head_dim = config.hidden_size / config.n_heads;
 
         // Initialize RoPE inverse frequencies
@@ -127,6 +135,7 @@ impl InferenceState {
 
         Self {
             pos: 0,
+            max_seq_len,
             hidden_state: Array1::zeros(config.hidden_size),
             residual: Array1::zeros(config.hidden_size),
 
@@ -143,10 +152,10 @@ impl InferenceState {
             k_state: Array2::zeros((config.n_kv_heads, head_dim)),
             v_state: Array2::zeros((config.n_kv_heads, head_dim)),
 
-            k_cache: Array4::zeros((config.n_layers, config.n_kv_heads, MAX_SEQ_LEN, head_dim)),
-            v_cache: Array4::zeros((config.n_layers, config.n_kv_heads, MAX_SEQ_LEN, head_dim)),
+            k_cache: Array4::zeros((config.n_layers, config.n_kv_heads, max_seq_len, head_dim)),
+            v_cache: Array4::zeros((config.n_layers, config.n_kv_heads, max_seq_len, head_dim)),
 
-            scores: Array2::zeros((config.n_heads, MAX_SEQ_LEN)),
+            scores: Array2::zeros((config.n_heads, max_seq_len)),
             context: Array2::zeros((config.n_heads, head_dim)),
 
             // Pre-allocated buffer for flattened context (avoids clone in output projection)
@@ -267,22 +276,27 @@ pub struct ArenaInferenceState {
 }
 
 impl ArenaInferenceState {
-    /// Create a new arena-backed inference state.
+    /// Create a new arena-backed inference state with the default max sequence length.
     pub fn new(config: Config) -> Self {
+        Self::with_seq_len(config, DEFAULT_MAX_SEQ_LEN)
+    }
+
+    /// Create a new arena-backed inference state with a custom max sequence length.
+    pub fn with_seq_len(config: Config, max_seq_len: usize) -> Self {
         // Create arena sized for typical forward pass
         let arena = crate::memory::InferenceArena::for_inference(
             config.hidden_size,
             config.intermediate_size,
             config.n_heads,
-            MAX_SEQ_LEN,
+            max_seq_len,
         );
 
         // Pre-allocate aligned scratch buffers
         let mlp_scratch = crate::memory::AlignedBuffer::zeros(config.intermediate_size);
-        let attention_scratch = crate::memory::AlignedBuffer::zeros(config.n_heads * MAX_SEQ_LEN);
+        let attention_scratch = crate::memory::AlignedBuffer::zeros(config.n_heads * max_seq_len);
 
         Self {
-            inner: InferenceState::new(config),
+            inner: InferenceState::with_seq_len(config, max_seq_len),
             arena,
             mlp_scratch,
             attention_scratch,

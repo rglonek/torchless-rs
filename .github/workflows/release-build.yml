@@ -20,26 +20,31 @@ jobs:
           - os: ubuntu-latest
             target: linux-x86_64
             ext: ""
+            archive: tar.gz
             features: "simd,parallel,cuda,opencl,rocm"
             install: "sudo apt-get update && sudo apt-get install -y ocl-icd-opencl-dev"
           - os: ubuntu-24.04-arm
             target: linux-aarch64
             ext: ""
+            archive: tar.gz
             features: "simd,parallel,cuda,opencl,rocm"
             install: "sudo apt-get update && sudo apt-get install -y ocl-icd-opencl-dev"
           - os: macos-14
             target: macos-x86_64
             ext: ""
+            archive: tar.gz
             features: "simd,parallel,opencl,accelerate"
             install: ""
           - os: macos-14
             target: macos-aarch64
             ext: ""
+            archive: tar.gz
             features: "simd,parallel,metal-gpu,opencl,accelerate"
             install: ""
           - os: windows-latest
             target: windows-x86_64
             ext: ".exe"
+            archive: zip
             features: "simd,parallel,cuda,opencl"
             install: "vcpkg install opencl:x64-windows && echo \"OPENCL_PATH=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\" >> $GITHUB_ENV"
 
@@ -72,8 +77,46 @@ jobs:
             --output-dir "$OUTPUT_DIR" \
             --output-name "$OUTPUT_NAME"
 
+      - name: Compress binary
+        shell: bash
+        run: |
+          cd releases
+          BINARY=$(ls torchless-*)
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a "${BINARY%.exe}.zip" "$BINARY"
+          else
+            tar czf "${BINARY}.tar.gz" "$BINARY"
+          fi
+          rm "$BINARY"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: torchless-${{ matrix.target }}
-          path: releases/torchless-*
+          path: |
+            releases/torchless-*.tar.gz
+            releases/torchless-*.zip
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

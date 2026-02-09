@@ -63,6 +63,10 @@ GPU backends are compiled in but only initialized when selected via `--backend`.
 # Basic usage
 ./target/release/torchless model.bin "The quick brown fox"
 
+# Interactive chat mode
+./target/release/torchless --chat model.bin
+./target/release/torchless --chat --system "You are a helpful assistant." model.bin
+
 # Select GPU backend at runtime
 ./target/release/torchless --backend cuda model.bin "Hello"
 ./target/release/torchless --backend opencl model.bin "Hello"
@@ -75,6 +79,8 @@ GPU backends are compiled in but only initialized when selected via `--backend`.
 ./target/release/torchless --max-tokens 100 --temperature 0.7 model.bin "Once upon"
 ```
 
+See [Parameter Reference](docs/params.md) for details on `--max-seq-len`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--lazy`, and `--speculative`.
+
 ## Performance
 
 | Mode | Memory (7B) | Speed |
@@ -84,11 +90,14 @@ GPU backends are compiled in but only initialized when selected via `--backend`.
 | GPU (FP16) | ~14GB VRAM | 20-50 tok/s |
 | GPU (INT4) | ~4GB VRAM | 30-80 tok/s |
 
+See [Supported Models & Memory](docs/models.md) for per-model memory requirements across all quantization levels and run modes.
+
 ## Documentation
 
 | Topic | Description |
 |-------|-------------|
 | [Getting Started](docs/getting-started.md) | Installation and first steps |
+| [Supported Models](docs/models.md) | Model list, memory requirements, recommendations |
 | [Library API](docs/library.md) | Using as a Rust library |
 | [Development](docs/development.md) | Testing and contributing |
 
@@ -121,6 +130,8 @@ GPU backends are compiled in but only initialized when selected via `--backend`.
 ### Reference
 | Topic | Description |
 |-------|-------------|
+| [Parameters](docs/params.md) | `--max-seq-len`, `--max-tokens`, `--temperature`, `--top-k`, `--top-p`, `--lazy`, `--speculative` |
+| [Future Parameters](docs/params-future.md) | Library configs not yet exposed via CLI |
 | [Model Formats](docs/formats/model-formats.md) | GGUF, Safetensors loading |
 | [Implementation](docs/implementation.md) | Technical internals |
 

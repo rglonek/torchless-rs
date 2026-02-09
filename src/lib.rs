@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod kernels;
 pub mod loader;
 pub mod memory;
@@ -5,6 +6,10 @@ pub mod model;
 pub mod sampler;
 pub mod tensor;
 pub mod tokenizer;
+
+// Chat template support
+pub use chat::{display_thinking_token, strip_thinking, ANSI_DIM, ANSI_RESET};
+pub use chat::{ChatMessage, ChatRole, ChatTemplate, ThinkingState, TokenAction};
 
 // Core loader types
 pub use loader::{Config, Parameters, TensorDtype, TensorView};
@@ -66,7 +71,11 @@ pub use model::{
 };
 
 // Sampler functions
-pub use sampler::{generate, generate_lazy, sample_greedy, sample_multinomial};
+pub use sampler::{
+    generate, generate_lazy, generate_lazy_until_eos, generate_until_eos, sample_greedy,
+    sample_multinomial, sample_top_k, sample_top_p, sample_with_config, GenerationResult,
+    SamplingConfig,
+};
 
 // Backend abstraction (Phase 1 foundation)
 pub use kernels::backend::{

@@ -7,6 +7,12 @@ if [ "$(basename "$(pwd)")" == "scripts" ]; then
     cd ..
 fi
 
+if [ "${1:-}" == "clean" ]; then
+    echo "Cleaning project"
+    cargo clean
+fi
+
+
 # run cargo clippy
 echo "Running cargo clippy"
 cargo clippy -- --deny warnings

@@ -1,4 +1,4 @@
-use torchless::{generate, InferenceState, Mistral, Parameters};
+use torchless::{generate, InferenceState, Mistral, Parameters, SamplingConfig};
 
 #[test]
 fn test_end_to_end_inference() {
@@ -21,7 +21,7 @@ fn test_end_to_end_inference() {
     // Generate a few tokens
     let mut token = *tokens.last().unwrap();
     for _ in 0..5 {
-        token = generate(&model, &mut state, token, 0.0, false);
+        token = generate(&model, &mut state, token, &SamplingConfig::greedy(), false);
         assert!(token < model.config.vocab_size as u32);
         state.pos += 1;
     }

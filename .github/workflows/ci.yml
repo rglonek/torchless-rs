@@ -55,22 +55,48 @@ jobs:
         run: cargo clippy -- -D warnings
 
   build:
-    name: Build
+    name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+            binary_path: target/release/torchless
+          - os: ubuntu-24.04-arm
+            name: linux-aarch64
+            binary_path: target/release/torchless
+          - os: macos-14
+            name: macos-aarch64
+            binary_path: target/release/torchless
+          - os: macos-14
+            name: macos-x86_64
+            rust_target: x86_64-apple-darwin
+            binary_path: target/x86_64-apple-darwin/release/torchless
+          - os: windows-latest
+            name: windows-x86_64
+            binary_path: target/release/torchless.exe
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Add cross-compilation target
+        if: matrix.rust_target
+        run: rustup target add ${{ matrix.rust_target }}
+
       - name: Build
-        run: cargo build --release --verbose
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            cargo build --release --verbose --target ${{ matrix.rust_target }}
+          else
+            cargo build --release --verbose
+          fi
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: torchless-${{ matrix.os }}
-          path: target/release/torchless
+          name: torchless-${{ matrix.name }}
+          path: ${{ matrix.binary_path }}

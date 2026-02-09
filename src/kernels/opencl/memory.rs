@@ -3,7 +3,7 @@
 //! This module provides GPU memory management utilities for OpenCL,
 //! including buffer pooling for efficient memory reuse.
 
-use ocl::{Buffer, Queue, flags};
+use ocl::{flags, Buffer, Queue};
 use std::collections::BTreeMap;
 
 // =============================================================================
@@ -191,14 +191,18 @@ pub fn create_buffer_zeros(queue: &Queue, len: usize) -> anyhow::Result<Buffer<f
 
 /// Copy data from a buffer to a slice.
 pub fn copy_buffer_to_slice(buffer: &Buffer<f32>, dst: &mut [f32]) -> anyhow::Result<()> {
-    buffer.read(dst).enq()
+    buffer
+        .read(dst)
+        .enq()
         .map_err(|e| anyhow::anyhow!("Failed to read from OpenCL buffer: {}", e))?;
     Ok(())
 }
 
 /// Copy data from a slice to a buffer.
 pub fn copy_slice_to_buffer(src: &[f32], buffer: &Buffer<f32>) -> anyhow::Result<()> {
-    buffer.write(src).enq()
+    buffer
+        .write(src)
+        .enq()
         .map_err(|e| anyhow::anyhow!("Failed to write to OpenCL buffer: {}", e))?;
     Ok(())
 }
@@ -227,13 +231,12 @@ pub fn compute_tensor_bytes(shape: &[usize]) -> usize {
 
 /// Get total memory available on the OpenCL device.
 pub fn get_device_memory_size(device: &ocl::Device) -> anyhow::Result<u64> {
-    device.info(ocl::enums::DeviceInfo::GlobalMemSize)
+    device
+        .info(ocl::enums::DeviceInfo::GlobalMemSize)
         .map_err(|e| anyhow::anyhow!("Failed to get device memory size: {}", e))
-        .and_then(|info| {
-            match info {
-                ocl::enums::DeviceInfoResult::GlobalMemSize(size) => Ok(size),
-                _ => Err(anyhow::anyhow!("Unexpected device info result")),
-            }
+        .and_then(|info| match info {
+            ocl::enums::DeviceInfoResult::GlobalMemSize(size) => Ok(size),
+            _ => Err(anyhow::anyhow!("Unexpected device info result")),
         })
 }
 

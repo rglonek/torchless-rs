@@ -53,7 +53,7 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 
 use super::UnifiedConfig;
-use crate::loader::quantization::{Q4_0Block, Q4KMBlock, Q8_0Block, QK4_0, QK8_0, QK_K};
+use crate::loader::quantization::{Q4KMBlock, Q4_0Block, Q8_0Block, QK4_0, QK8_0, QK_K};
 
 /// GGUF magic number: "GGUF" in ASCII
 pub const GGUF_MAGIC: u32 = 0x46554747;
@@ -147,7 +147,12 @@ impl GGMLType {
             GGMLType::Q4_0 | GGMLType::Q4_1 => QK4_0,
             GGMLType::Q5_0 | GGMLType::Q5_1 => 32,
             GGMLType::Q8_0 | GGMLType::Q8_1 => QK8_0,
-            GGMLType::Q2_K | GGMLType::Q3_K | GGMLType::Q4_K | GGMLType::Q5_K | GGMLType::Q6_K | GGMLType::Q8_K => QK_K,
+            GGMLType::Q2_K
+            | GGMLType::Q3_K
+            | GGMLType::Q4_K
+            | GGMLType::Q5_K
+            | GGMLType::Q6_K
+            | GGMLType::Q8_K => QK_K,
             _ => 32, // Default block size for IQ types
         }
     }
@@ -190,8 +195,14 @@ impl GGMLType {
     pub fn is_quantized(&self) -> bool {
         !matches!(
             self,
-            GGMLType::F32 | GGMLType::F16 | GGMLType::BF16 | GGMLType::F64 |
-            GGMLType::I8 | GGMLType::I16 | GGMLType::I32 | GGMLType::I64
+            GGMLType::F32
+                | GGMLType::F16
+                | GGMLType::BF16
+                | GGMLType::F64
+                | GGMLType::I8
+                | GGMLType::I16
+                | GGMLType::I32
+                | GGMLType::I64
         )
     }
 }
@@ -358,37 +369,49 @@ impl GGUFMetadata {
     /// Get context length
     pub fn context_length(&self) -> Option<u32> {
         let arch = self.architecture()?;
-        self.kv.get(&format!("{}.context_length", arch)).and_then(|v| v.as_u32())
+        self.kv
+            .get(&format!("{}.context_length", arch))
+            .and_then(|v| v.as_u32())
     }
 
     /// Get embedding length (hidden size)
     pub fn embedding_length(&self) -> Option<u32> {
         let arch = self.architecture()?;
-        self.kv.get(&format!("{}.embedding_length", arch)).and_then(|v| v.as_u32())
+        self.kv
+            .get(&format!("{}.embedding_length", arch))
+            .and_then(|v| v.as_u32())
     }
 
     /// Get number of attention heads
     pub fn head_count(&self) -> Option<u32> {
         let arch = self.architecture()?;
-        self.kv.get(&format!("{}.attention.head_count", arch)).and_then(|v| v.as_u32())
+        self.kv
+            .get(&format!("{}.attention.head_count", arch))
+            .and_then(|v| v.as_u32())
     }
 
     /// Get number of key-value heads
     pub fn head_count_kv(&self) -> Option<u32> {
         let arch = self.architecture()?;
-        self.kv.get(&format!("{}.attention.head_count_kv", arch)).and_then(|v| v.as_u32())
+        self.kv
+            .get(&format!("{}.attention.head_count_kv", arch))
+            .and_then(|v| v.as_u32())
     }
 
     /// Get number of layers
     pub fn block_count(&self) -> Option<u32> {
         let arch = self.architecture()?;
-        self.kv.get(&format!("{}.block_count", arch)).and_then(|v| v.as_u32())
+        self.kv
+            .get(&format!("{}.block_count", arch))
+            .and_then(|v| v.as_u32())
     }
 
     /// Get feed-forward length (intermediate size)
     pub fn feed_forward_length(&self) -> Option<u32> {
         let arch = self.architecture()?;
-        self.kv.get(&format!("{}.feed_forward_length", arch)).and_then(|v| v.as_u32())
+        self.kv
+            .get(&format!("{}.feed_forward_length", arch))
+            .and_then(|v| v.as_u32())
     }
 
     /// Get vocabulary size
@@ -405,15 +428,21 @@ impl GGUFMetadata {
     /// Get RoPE theta
     pub fn rope_freq_base(&self) -> Option<f32> {
         let arch = self.architecture()?;
-        self.kv.get(&format!("{}.rope.freq_base", arch)).and_then(|v| v.as_f32())
+        self.kv
+            .get(&format!("{}.rope.freq_base", arch))
+            .and_then(|v| v.as_f32())
     }
 
     /// Get layer norm epsilon
     pub fn layer_norm_eps(&self) -> Option<f32> {
         let arch = self.architecture()?;
         // Try both possible key names
-        self.kv.get(&format!("{}.attention.layer_norm_epsilon", arch))
-            .or_else(|| self.kv.get(&format!("{}.attention.layer_norm_rms_epsilon", arch)))
+        self.kv
+            .get(&format!("{}.attention.layer_norm_epsilon", arch))
+            .or_else(|| {
+                self.kv
+                    .get(&format!("{}.attention.layer_norm_rms_epsilon", arch))
+            })
             .and_then(|v| v.as_f32())
     }
 
@@ -424,7 +453,9 @@ impl GGUFMetadata {
 
     /// Get quantization version
     pub fn quantization_version(&self) -> Option<u32> {
-        self.kv.get("general.quantization_version").and_then(|v| v.as_u32())
+        self.kv
+            .get("general.quantization_version")
+            .and_then(|v| v.as_u32())
     }
 }
 
@@ -476,8 +507,8 @@ impl GGUFLoader {
     /// Load a GGUF file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open GGUF file: {:?}", path))?;
+        let file =
+            File::open(path).with_context(|| format!("Failed to open GGUF file: {:?}", path))?;
         let mmap = unsafe { Mmap::map(&file)? };
 
         let mut cursor = Cursor::new(&mmap[..]);
@@ -516,7 +547,8 @@ impl GGUFLoader {
         };
 
         // Get alignment from metadata or use default
-        let alignment = metadata.kv
+        let alignment = metadata
+            .kv
             .get("general.alignment")
             .and_then(|v| v.as_u32())
             .map(|v| v as usize)
@@ -613,8 +645,8 @@ impl GGUFLoader {
         }
 
         let dtype_val = cursor.read_u32::<LittleEndian>()?;
-        let dtype = GGMLType::from_u32(dtype_val)
-            .context(format!("Unknown GGML type: {}", dtype_val))?;
+        let dtype =
+            GGMLType::from_u32(dtype_val).context(format!("Unknown GGML type: {}", dtype_val))?;
 
         let offset = cursor.read_u64::<LittleEndian>()?;
 
@@ -639,7 +671,9 @@ impl GGUFLoader {
 
     /// Get raw tensor bytes
     pub fn get_tensor_bytes(&self, name: &str) -> Result<&[u8]> {
-        let info = self.tensors.get(name)
+        let info = self
+            .tensors
+            .get(name)
             .context(format!("Tensor not found: {}", name))?;
 
         let start = self.tensor_data_offset + info.offset as usize;
@@ -661,7 +695,9 @@ impl GGUFLoader {
 
     /// Get tensor as f32 vector (dequantizes if necessary)
     pub fn get_tensor_f32(&self, name: &str) -> Result<Vec<f32>> {
-        let info = self.tensors.get(name)
+        let info = self
+            .tensors
+            .get(name)
             .context(format!("Tensor not found: {}", name))?;
         let bytes = self.get_tensor_bytes(name)?;
         let numel = info.numel();
@@ -731,12 +767,12 @@ impl GGUFLoader {
                     }
                     let scale = f16::from_le_bytes([block_data[0], block_data[1]]).to_f32();
                     let min = f16::from_le_bytes([block_data[2], block_data[3]]).to_f32();
-                    
+
                     for i in 0..QK4_1 / 2 {
                         let byte = block_data[4 + i];
                         let low_nibble = (byte & 0x0F) as f32;
                         let high_nibble = (byte >> 4) as f32;
-                        
+
                         result.push(low_nibble * scale + min);
                         result.push(high_nibble * scale + min);
                     }
@@ -757,7 +793,7 @@ impl GGUFLoader {
                     let scale = f16::from_le_bytes([block_data[0], block_data[1]]).to_f32();
                     let qh = &block_data[2..6];
                     let qs = &block_data[6..22];
-                    
+
                     for i in 0..QK5_0 {
                         let byte_idx = i / 2;
                         let nibble = if i % 2 == 0 {
@@ -765,7 +801,7 @@ impl GGUFLoader {
                         } else {
                             qs[byte_idx] >> 4
                         };
-                        
+
                         let high_bit = ((qh[i / 8] >> (i % 8)) & 1) as u8;
                         let quant_val = nibble | (high_bit << 4);
                         let val = (quant_val as i8 - 16) as f32 * scale;
@@ -789,7 +825,7 @@ impl GGUFLoader {
                     let min = f16::from_le_bytes([block_data[2], block_data[3]]).to_f32();
                     let qh = &block_data[4..8];
                     let qs = &block_data[8..24];
-                    
+
                     for i in 0..QK5_1 {
                         let byte_idx = i / 2;
                         let nibble = if i % 2 == 0 {
@@ -797,7 +833,7 @@ impl GGUFLoader {
                         } else {
                             qs[byte_idx] >> 4
                         };
-                        
+
                         let high_bit = ((qh[i / 8] >> (i % 8)) & 1) as u8;
                         let quant_val = nibble | (high_bit << 4);
                         result.push(quant_val as f32 * scale + min);
@@ -820,7 +856,7 @@ impl GGUFLoader {
                     let scale = f16::from_le_bytes([block_data[0], block_data[1]]).to_f32();
                     // bytes[2..4] is sum, not used for dequant
                     let qs = &block_data[4..36];
-                    
+
                     for i in 0..QK8_1 {
                         let q = qs[i] as i8;
                         result.push(q as f32 * scale);
@@ -834,33 +870,37 @@ impl GGUFLoader {
                 // Structure: scale (f16) + 128 bytes ql + 64 bytes qh + 16 bytes scales
                 const QK6_K: usize = 256;
                 const BLOCK_SIZE: usize = 210;
-                
+
                 let mut result = Vec::with_capacity(numel);
                 for block_data in bytes.chunks(BLOCK_SIZE) {
                     if block_data.len() < BLOCK_SIZE {
                         break;
                     }
-                    
+
                     // Simplified Q6_K dequantization
                     // Full implementation would need proper scale handling
                     let ql = &block_data[0..128];
                     let qh = &block_data[128..192];
                     let scales = &block_data[192..208];
                     let d = f16::from_le_bytes([block_data[208], block_data[209]]).to_f32();
-                    
+
                     for i in 0..QK6_K {
                         let l_idx = i;
                         let h_idx = i / 4;
                         let h_shift = (i % 4) * 2;
-                        
+
                         let ql_val = ql[l_idx / 2];
-                        let q_low = if l_idx % 2 == 0 { ql_val & 0x0F } else { ql_val >> 4 };
+                        let q_low = if l_idx % 2 == 0 {
+                            ql_val & 0x0F
+                        } else {
+                            ql_val >> 4
+                        };
                         let q_high = ((qh[h_idx] >> h_shift) & 0x03) as u8;
                         let q = (q_low | (q_high << 4)) as i8 - 32;
-                        
+
                         let scale_idx = i / 16;
                         let scale = (scales[scale_idx] as i8) as f32;
-                        
+
                         result.push(d * scale * q as f32);
                     }
                 }

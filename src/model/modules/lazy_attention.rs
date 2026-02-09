@@ -188,7 +188,12 @@ impl LazyAttention {
 
             {
                 let mut scores_slice = state.scores.slice_mut(s![h, ..seq_len]);
-                kernels::fast_compute_attention_scores(q_head, k_cache_view, &mut scores_slice, scale);
+                kernels::fast_compute_attention_scores(
+                    q_head,
+                    k_cache_view,
+                    &mut scores_slice,
+                    scale,
+                );
                 kernels::fast_softmax_view(&mut scores_slice);
             }
 

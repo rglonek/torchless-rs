@@ -95,7 +95,7 @@ pub fn detect_format<P: AsRef<Path>>(path: P) -> Result<ModelFormat> {
             let json_str = std::str::from_utf8(json_bytes)
                 .map(|s| s.trim_end_matches('\0'))
                 .unwrap_or("");
-            
+
             // Check for Torchless-specific keys
             if json_str.contains("\"metadata\"") && json_str.contains("\"tensors\"") {
                 return Ok(ModelFormat::TorchlessBinary);
@@ -288,9 +288,7 @@ impl UnifiedModelData {
     /// Get tensor shape by name
     pub fn get_tensor_shape(&self, name: &str) -> Option<Vec<usize>> {
         match &self.inner {
-            ModelDataInner::Torchless(params) => {
-                params.get_tensor_shape(name).map(|s| s.to_vec())
-            }
+            ModelDataInner::Torchless(params) => params.get_tensor_shape(name).map(|s| s.to_vec()),
             ModelDataInner::GGUF(loader) => {
                 loader.get_tensor_info(name).map(|info| info.shape.clone())
             }
@@ -331,7 +329,7 @@ impl UnifiedModelData {
 }
 
 // Re-export key types
-pub use gguf::{GGUFLoader, GGUFMetadata, GGUFTensorInfo, GGMLType};
+pub use gguf::{GGMLType, GGUFLoader, GGUFMetadata, GGUFTensorInfo};
 pub use safetensors::{SafetensorsLoader, SafetensorsTensorInfo};
 
 #[cfg(test)]
@@ -342,7 +340,10 @@ mod tests {
     fn test_format_display() {
         assert_eq!(format!("{}", ModelFormat::GGUF), "GGUF");
         assert_eq!(format!("{}", ModelFormat::Safetensors), "Safetensors");
-        assert_eq!(format!("{}", ModelFormat::TorchlessBinary), "Torchless Binary");
+        assert_eq!(
+            format!("{}", ModelFormat::TorchlessBinary),
+            "Torchless Binary"
+        );
     }
 
     #[test]

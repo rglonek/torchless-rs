@@ -24,9 +24,9 @@
 //! └─────────┴────────────┴───────────────────────────┴───────────────┘
 //! ```
 
+use byteorder::{LittleEndian, ReadBytesExt};
 use half::f16;
 use std::io::{Cursor, Read};
-use byteorder::{LittleEndian, ReadBytesExt};
 
 /// Block size for Q4_0 and Q8_0 quantization (number of weights per block)
 pub const QK4_0: usize = 32;
@@ -50,7 +50,7 @@ pub const K_SCALE_SIZE: usize = 12;
 #[derive(Debug, Clone, Copy)]
 pub struct Q4_0Block {
     /// Scale factor (f16, 2 bytes)
-    pub scale: u16,  // Stored as raw f16 bits
+    pub scale: u16, // Stored as raw f16 bits
     /// Packed 4-bit weights (16 bytes = 32 nibbles)
     pub qs: [u8; QK4_0 / 2],
 }
@@ -83,7 +83,7 @@ impl Q4_0Block {
     pub fn dequantize_block(&self) -> [f32; QK4_0] {
         let mut result = [0.0f32; QK4_0];
         let scale = self.scale_f32();
-        
+
         for (i, byte) in self.qs.iter().enumerate() {
             let low = (*byte & 0x0F) as i8 - 8;
             let high = (*byte >> 4) as i8 - 8;
@@ -106,19 +106,19 @@ impl Q4_0Block {
     pub fn from_f32(values: &[f32; QK4_0]) -> Self {
         // Find max absolute value
         let max_abs = values.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
-        
+
         // Scale to fit in [-8, 7]
         let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
         let scale_f16 = f16::from_f32(scale);
         let inv_scale = 1.0 / scale_f16.to_f32();
-        
+
         let mut qs = [0u8; QK4_0 / 2];
         for (i, byte) in qs.iter_mut().enumerate() {
             let q0 = ((values[i * 2] * inv_scale).round().clamp(-8.0, 7.0) as i8 + 8) as u8;
             let q1 = ((values[i * 2 + 1] * inv_scale).round().clamp(-8.0, 7.0) as i8 + 8) as u8;
             *byte = (q0 & 0x0F) | ((q1 & 0x0F) << 4);
         }
-        
+
         Self {
             scale: scale_f16.to_bits(),
             qs,
@@ -185,17 +185,17 @@ impl Q8_0Block {
     pub fn from_f32(values: &[f32; QK8_0]) -> Self {
         // Find max absolute value
         let max_abs = values.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
-        
+
         // Scale to fit in [-127, 127]
         let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
         let scale_f16 = f16::from_f32(scale);
         let inv_scale = 1.0 / scale_f16.to_f32();
-        
+
         let mut qs = [0i8; QK8_0];
         for (i, &val) in values.iter().enumerate() {
             qs[i] = (val * inv_scale).round().clamp(-127.0, 127.0) as i8;
         }
-        
+
         Self {
             scale: scale_f16.to_bits(),
             qs,
@@ -279,32 +279,32 @@ impl Q4KMBlock {
         } else {
             self.qs[byte_idx] >> 4
         };
-        
+
         let scale = self.get_scale(block_idx);
         let min = self.get_min(block_idx);
-        
+
         nibble as f32 * scale - min
     }
 
     /// Dequantize all 256 values in this super-block
     pub fn dequantize_block(&self) -> [f32; QK_K] {
         let mut result = [0.0f32; QK_K];
-        
+
         for block_idx in 0..Self::N_BLOCKS {
             let scale = self.get_scale(block_idx);
             let min = self.get_min(block_idx);
             let base_idx = block_idx * 32;
-            
+
             for i in 0..16 {
                 let byte = self.qs[base_idx / 2 + i];
                 let low_nibble = (byte & 0x0F) as f32;
                 let high_nibble = (byte >> 4) as f32;
-                
+
                 result[base_idx + i * 2] = low_nibble * scale - min;
                 result[base_idx + i * 2 + 1] = high_nibble * scale - min;
             }
         }
-        
+
         result
     }
 
@@ -312,16 +312,16 @@ impl Q4KMBlock {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         assert!(bytes.len() >= Self::SIZE);
         let mut cursor = Cursor::new(bytes);
-        
+
         let d_bits = cursor.read_u16::<LittleEndian>().unwrap();
         let dmin_bits = cursor.read_u16::<LittleEndian>().unwrap();
-        
+
         let mut scales = [0u8; K_SCALE_SIZE];
         cursor.read_exact(&mut scales).unwrap();
-        
+
         let mut qs = [0u8; QK_K / 2];
         cursor.read_exact(&mut qs).unwrap();
-        
+
         Self {
             d: f16::from_bits(d_bits),
             dmin: f16::from_bits(dmin_bits),
@@ -338,14 +338,17 @@ impl Q4KMBlock {
         // The min is stored as a positive value that gets subtracted
         let mut block_scales = [0.0f32; Self::N_BLOCKS];
         let mut block_mins = [0.0f32; Self::N_BLOCKS];
-        
+
         for block_idx in 0..Self::N_BLOCKS {
             let block_start = block_idx * 32;
             let block_values = &values[block_start..block_start + 32];
-            
+
             let min_val = block_values.iter().copied().fold(f32::INFINITY, f32::min);
-            let max_val = block_values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            
+            let max_val = block_values
+                .iter()
+                .copied()
+                .fold(f32::NEG_INFINITY, f32::max);
+
             // Store the min as a positive offset
             // dequant: nibble * scale - min = original
             // So if min_val < 0, then -min_val is positive and we subtract it
@@ -353,23 +356,23 @@ impl Q4KMBlock {
             let range = max_val - min_val;
             block_scales[block_idx] = if range > 1e-10 { range / 15.0 } else { 1.0 };
         }
-        
+
         // Compute super-block scales
         let max_scale = block_scales.iter().copied().fold(1e-10f32, f32::max);
         let max_min = block_mins.iter().map(|x| x.abs()).fold(1e-10f32, f32::max);
-        
+
         let d = max_scale / 15.0;
         let dmin = max_min / 15.0;
-        
+
         // Pack scales and mins (4-bit each for simplicity)
         let mut scales = [0u8; K_SCALE_SIZE];
         for i in 0..Self::N_BLOCKS {
             let scale_q = (block_scales[i] / d).round().clamp(0.0, 15.0) as u8;
             let min_q = (block_mins[i] / dmin).round().clamp(0.0, 15.0) as u8;
-            
+
             let scale_byte_idx = i / 2;
             let min_byte_idx = 4 + i / 2;
-            
+
             if i % 2 == 0 {
                 scales[scale_byte_idx] = (scales[scale_byte_idx] & 0xF0) | scale_q;
                 scales[min_byte_idx] = (scales[min_byte_idx] & 0xF0) | min_q;
@@ -378,13 +381,13 @@ impl Q4KMBlock {
                 scales[min_byte_idx] = (scales[min_byte_idx] & 0x0F) | (min_q << 4);
             }
         }
-        
+
         // Quantize values using the computed scales
         let mut qs = [0u8; QK_K / 2];
         for block_idx in 0..Self::N_BLOCKS {
             let block_start = block_idx * 32;
             let block_values = &values[block_start..block_start + 32];
-            
+
             // Get the reconstructed scale and min from the packed values
             let scale_byte_idx = block_idx / 2;
             let scale_bits = if block_idx % 2 == 0 {
@@ -393,7 +396,7 @@ impl Q4KMBlock {
                 scales[scale_byte_idx] >> 4
             };
             let rec_scale = d * scale_bits as f32;
-            
+
             let min_byte_idx = 4 + block_idx / 2;
             let min_bits = if block_idx % 2 == 0 {
                 scales[min_byte_idx] & 0x0F
@@ -401,22 +404,30 @@ impl Q4KMBlock {
                 scales[min_byte_idx] >> 4
             };
             let rec_min = dmin * min_bits as f32;
-            
-            let inv_scale = if rec_scale > 1e-10 { 1.0 / rec_scale } else { 0.0 };
-            
+
+            let inv_scale = if rec_scale > 1e-10 {
+                1.0 / rec_scale
+            } else {
+                0.0
+            };
+
             for i in 0..16 {
                 let idx0 = i * 2;
                 let idx1 = i * 2 + 1;
-                
+
                 // Dequant: nibble * scale - min = value
                 // Quant: (value + min) / scale = nibble
-                let q0 = ((block_values[idx0] + rec_min) * inv_scale).round().clamp(0.0, 15.0) as u8;
-                let q1 = ((block_values[idx1] + rec_min) * inv_scale).round().clamp(0.0, 15.0) as u8;
-                
+                let q0 = ((block_values[idx0] + rec_min) * inv_scale)
+                    .round()
+                    .clamp(0.0, 15.0) as u8;
+                let q1 = ((block_values[idx1] + rec_min) * inv_scale)
+                    .round()
+                    .clamp(0.0, 15.0) as u8;
+
                 qs[block_start / 2 + i] = q0 | (q1 << 4);
             }
         }
-        
+
         Self {
             d: f16::from_f32(d),
             dmin: f16::from_f32(dmin),
@@ -487,39 +498,39 @@ impl Q4KSBlock {
     pub fn dequantize(&self, index: usize) -> f32 {
         debug_assert!(index < QK_K);
         let block_idx = index / 32;
-        
+
         let byte_idx = index / 2;
         let nibble = if index % 2 == 0 {
             self.qs[byte_idx] & 0x0F
         } else {
             self.qs[byte_idx] >> 4
         };
-        
+
         let scale = self.get_scale(block_idx);
         let min = self.get_min(block_idx);
-        
+
         nibble as f32 * scale - min
     }
 
     /// Dequantize all 256 values
     pub fn dequantize_block(&self) -> [f32; QK_K] {
         let mut result = [0.0f32; QK_K];
-        
+
         for block_idx in 0..Self::N_BLOCKS {
             let scale = self.get_scale(block_idx);
             let min = self.get_min(block_idx);
             let base_idx = block_idx * 32;
-            
+
             for i in 0..16 {
                 let byte = self.qs[base_idx / 2 + i];
                 let low_nibble = (byte & 0x0F) as f32;
                 let high_nibble = (byte >> 4) as f32;
-                
+
                 result[base_idx + i * 2] = low_nibble * scale - min;
                 result[base_idx + i * 2 + 1] = high_nibble * scale - min;
             }
         }
-        
+
         result
     }
 
@@ -527,16 +538,16 @@ impl Q4KSBlock {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         assert!(bytes.len() >= Self::SIZE);
         let mut cursor = Cursor::new(bytes);
-        
+
         let d_bits = cursor.read_u16::<LittleEndian>().unwrap();
         let dmin_bits = cursor.read_u16::<LittleEndian>().unwrap();
-        
+
         let mut scales = [0u8; 6];
         cursor.read_exact(&mut scales).unwrap();
-        
+
         let mut qs = [0u8; QK_K / 2];
         cursor.read_exact(&mut qs).unwrap();
-        
+
         Self {
             d: f16::from_bits(d_bits),
             dmin: f16::from_bits(dmin_bits),
@@ -550,35 +561,42 @@ impl Q4KSBlock {
         // Compute per-block statistics
         let mut block_scales = [0.0f32; Self::N_BLOCKS];
         let mut block_mins = [0.0f32; Self::N_BLOCKS];
-        
+
         for block_idx in 0..Self::N_BLOCKS {
             let block_start = block_idx * 32;
             let block_values = &values[block_start..block_start + 32];
-            
+
             let min_val = block_values.iter().copied().fold(f32::INFINITY, f32::min);
-            let max_val = block_values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            
+            let max_val = block_values
+                .iter()
+                .copied()
+                .fold(f32::NEG_INFINITY, f32::max);
+
             block_mins[block_idx] = min_val;
             let range = max_val - min_val;
             block_scales[block_idx] = if range > 0.0 { range / 15.0 } else { 0.0 };
         }
-        
+
         // Compute super-block scales
         let max_scale = block_scales.iter().copied().fold(0.0f32, f32::max);
         let max_min = block_mins.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
-        
-        let d = if max_scale > 0.0 { max_scale / 15.0 } else { 1.0 };
+
+        let d = if max_scale > 0.0 {
+            max_scale / 15.0
+        } else {
+            1.0
+        };
         let dmin = if max_min > 0.0 { max_min / 15.0 } else { 1.0 };
-        
+
         // Pack scales and mins (4-bit each, only first 6 blocks)
         let mut scales = [0u8; 6];
         for i in 0..6.min(Self::N_BLOCKS) {
             let scale_q = (block_scales[i] / d).round().clamp(0.0, 15.0) as u8;
             let min_q = (block_mins[i].abs() / dmin).round().clamp(0.0, 15.0) as u8;
-            
+
             let scale_byte_idx = i / 2;
             let min_byte_idx = 3 + i / 2;
-            
+
             if i % 2 == 0 {
                 scales[scale_byte_idx] = (scales[scale_byte_idx] & 0xF0) | scale_q;
                 scales[min_byte_idx] = (scales[min_byte_idx] & 0xF0) | min_q;
@@ -587,29 +605,29 @@ impl Q4KSBlock {
                 scales[min_byte_idx] = (scales[min_byte_idx] & 0x0F) | (min_q << 4);
             }
         }
-        
+
         // Quantize values
         let mut qs = [0u8; QK_K / 2];
         for block_idx in 0..Self::N_BLOCKS {
             let block_start = block_idx * 32;
-            let inv_scale = if block_scales[block_idx] > 0.0 { 
-                1.0 / block_scales[block_idx] 
-            } else { 
-                0.0 
+            let inv_scale = if block_scales[block_idx] > 0.0 {
+                1.0 / block_scales[block_idx]
+            } else {
+                0.0
             };
             let min = block_mins[block_idx];
-            
+
             for i in 0..16 {
                 let idx0 = block_start + i * 2;
                 let idx1 = block_start + i * 2 + 1;
-                
+
                 let q0 = ((values[idx0] - min) * inv_scale).round().clamp(0.0, 15.0) as u8;
                 let q1 = ((values[idx1] - min) * inv_scale).round().clamp(0.0, 15.0) as u8;
-                
+
                 qs[block_start / 2 + i] = q0 | (q1 << 4);
             }
         }
-        
+
         Self {
             d: f16::from_f32(d),
             dmin: f16::from_f32(dmin),
@@ -717,31 +735,27 @@ impl QuantizedTensor {
         assert_eq!(values.len(), numel, "Shape mismatch");
 
         let data = match format {
-            QuantFormat::F32 => {
-                values.iter().flat_map(|v| v.to_le_bytes()).collect()
-            }
-            QuantFormat::F16 => {
-                values.iter()
-                    .flat_map(|v| f16::from_f32(*v).to_le_bytes())
-                    .collect()
-            }
-            QuantFormat::BF16 => {
-                values.iter()
-                    .flat_map(|v| {
-                        let bits = v.to_bits();
-                        ((bits >> 16) as u16).to_le_bytes()
-                    })
-                    .collect()
-            }
+            QuantFormat::F32 => values.iter().flat_map(|v| v.to_le_bytes()).collect(),
+            QuantFormat::F16 => values
+                .iter()
+                .flat_map(|v| f16::from_f32(*v).to_le_bytes())
+                .collect(),
+            QuantFormat::BF16 => values
+                .iter()
+                .flat_map(|v| {
+                    let bits = v.to_bits();
+                    ((bits >> 16) as u16).to_le_bytes()
+                })
+                .collect(),
             QuantFormat::Q8_0 => {
                 let n_blocks = numel.div_ceil(QK8_0);
                 let mut data = Vec::with_capacity(n_blocks * Q8_0Block::SIZE);
-                
+
                 for chunk in values.chunks(QK8_0) {
                     let mut block_values = [0.0f32; QK8_0];
                     block_values[..chunk.len()].copy_from_slice(chunk);
                     let block = Q8_0Block::from_f32(&block_values);
-                    
+
                     data.extend_from_slice(&block.scale.to_le_bytes());
                     for &q in &block.qs {
                         data.push(q as u8);
@@ -752,12 +766,12 @@ impl QuantizedTensor {
             QuantFormat::Q4_0 => {
                 let n_blocks = numel.div_ceil(QK4_0);
                 let mut data = Vec::with_capacity(n_blocks * Q4_0Block::SIZE);
-                
+
                 for chunk in values.chunks(QK4_0) {
                     let mut block_values = [0.0f32; QK4_0];
                     block_values[..chunk.len()].copy_from_slice(chunk);
                     let block = Q4_0Block::from_f32(&block_values);
-                    
+
                     data.extend_from_slice(&block.scale.to_le_bytes());
                     data.extend_from_slice(&block.qs);
                 }
@@ -766,12 +780,12 @@ impl QuantizedTensor {
             QuantFormat::Q4_K_M => {
                 let n_blocks = numel.div_ceil(QK_K);
                 let mut data = Vec::with_capacity(n_blocks * Q4KMBlock::SIZE);
-                
+
                 for chunk in values.chunks(QK_K) {
                     let mut block_values = [0.0f32; QK_K];
                     block_values[..chunk.len()].copy_from_slice(chunk);
                     let block = Q4KMBlock::from_f32(&block_values);
-                    
+
                     data.extend_from_slice(&block.d.to_le_bytes());
                     data.extend_from_slice(&block.dmin.to_le_bytes());
                     data.extend_from_slice(&block.scales);
@@ -783,13 +797,13 @@ impl QuantizedTensor {
                 // Similar to Q4_K_M but with smaller scale storage
                 let n_blocks = numel.div_ceil(QK_K);
                 let mut data = Vec::with_capacity(n_blocks * Q4KSBlock::SIZE);
-                
+
                 for chunk in values.chunks(QK_K) {
                     // Use Q4_K_M quantization for now, Q4_K_S would need its own from_f32
                     let mut block_values = [0.0f32; QK_K];
                     block_values[..chunk.len()].copy_from_slice(chunk);
                     let block = Q4KMBlock::from_f32(&block_values);
-                    
+
                     // Store in Q4_K_S format (subset of Q4_K_M)
                     data.extend_from_slice(&block.d.to_le_bytes());
                     data.extend_from_slice(&block.dmin.to_le_bytes());
@@ -801,35 +815,36 @@ impl QuantizedTensor {
             }
         };
 
-        Self { data, shape, format }
+        Self {
+            data,
+            shape,
+            format,
+        }
     }
 
     /// Dequantize to f32 Vec
     pub fn to_f32(&self) -> Vec<f32> {
         let numel: usize = self.shape.iter().product();
-        
+
         match self.format {
-            QuantFormat::F32 => {
-                self.data
-                    .chunks_exact(4)
-                    .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-                    .collect()
-            }
-            QuantFormat::F16 => {
-                self.data
-                    .chunks_exact(2)
-                    .map(|bytes| f16::from_le_bytes([bytes[0], bytes[1]]).to_f32())
-                    .collect()
-            }
-            QuantFormat::BF16 => {
-                self.data
-                    .chunks_exact(2)
-                    .map(|bytes| {
-                        let bits = u16::from_le_bytes([bytes[0], bytes[1]]);
-                        f32::from_bits((bits as u32) << 16)
-                    })
-                    .collect()
-            }
+            QuantFormat::F32 => self
+                .data
+                .chunks_exact(4)
+                .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                .collect(),
+            QuantFormat::F16 => self
+                .data
+                .chunks_exact(2)
+                .map(|bytes| f16::from_le_bytes([bytes[0], bytes[1]]).to_f32())
+                .collect(),
+            QuantFormat::BF16 => self
+                .data
+                .chunks_exact(2)
+                .map(|bytes| {
+                    let bits = u16::from_le_bytes([bytes[0], bytes[1]]);
+                    f32::from_bits((bits as u32) << 16)
+                })
+                .collect(),
             QuantFormat::Q8_0 => {
                 let mut result = Vec::with_capacity(numel);
                 for block_data in self.data.chunks(Q8_0Block::SIZE) {
@@ -899,10 +914,15 @@ mod tests {
         let values: [f32; 32] = std::array::from_fn(|i| (i as f32 - 16.0) / 4.0);
         let block = Q4_0Block::from_f32(&values);
         let recovered = block.dequantize_block();
-        
+
         // Check that recovered values are close to original
         for (orig, rec) in values.iter().zip(recovered.iter()) {
-            assert!((orig - rec).abs() < 0.5, "Q4_0 roundtrip: {} vs {}", orig, rec);
+            assert!(
+                (orig - rec).abs() < 0.5,
+                "Q4_0 roundtrip: {} vs {}",
+                orig,
+                rec
+            );
         }
     }
 
@@ -911,10 +931,15 @@ mod tests {
         let values: [f32; 32] = std::array::from_fn(|i| (i as f32 - 16.0) / 4.0);
         let block = Q8_0Block::from_f32(&values);
         let recovered = block.dequantize_block();
-        
+
         // Q8_0 should have better precision than Q4_0
         for (orig, rec) in values.iter().zip(recovered.iter()) {
-            assert!((orig - rec).abs() < 0.1, "Q8_0 roundtrip: {} vs {}", orig, rec);
+            assert!(
+                (orig - rec).abs() < 0.1,
+                "Q8_0 roundtrip: {} vs {}",
+                orig,
+                rec
+            );
         }
     }
 
@@ -923,9 +948,9 @@ mod tests {
         let values: [f32; 256] = std::array::from_fn(|i| (i as f32 - 128.0) / 32.0);
         let block = Q4KMBlock::from_f32(&values);
         let recovered = block.dequantize_block();
-        
+
         // Q4_K_M is a complex format with per-block scales and mins.
-        // 4-bit quantization with nested quantization of scales inherently has 
+        // 4-bit quantization with nested quantization of scales inherently has
         // larger errors. The format quantizes scales to 4-bit as well.
         // We test for reasonable correlation rather than exact values.
         let mut total_error = 0.0f32;
@@ -934,37 +959,62 @@ mod tests {
         }
         let avg_error = total_error / 256.0;
         // 4-bit with 4-bit scales typically has ~0.3-0.6 average error
-        assert!(avg_error < 0.7, "Q4_K_M average error too high: {}", avg_error);
+        assert!(
+            avg_error < 0.7,
+            "Q4_K_M average error too high: {}",
+            avg_error
+        );
     }
 
     #[test]
     fn test_quantized_tensor_compression() {
         let data: Vec<f32> = (0..1024).map(|i| (i as f32 - 512.0) / 128.0).collect();
-        
+
         let q4_0 = QuantizedTensor::from_f32(&data, vec![1024], QuantFormat::Q4_0);
         let q4_k_m = QuantizedTensor::from_f32(&data, vec![1024], QuantFormat::Q4_K_M);
         let f16 = QuantizedTensor::from_f32(&data, vec![1024], QuantFormat::F16);
-        
+
         // Check compression ratios
         assert!(q4_0.compression_ratio() > 5.0, "Q4_0 should compress ~7x");
-        assert!(q4_k_m.compression_ratio() > 5.0, "Q4_K_M should compress ~7x");
-        assert!((f16.compression_ratio() - 2.0).abs() < 0.1, "F16 should compress 2x");
+        assert!(
+            q4_k_m.compression_ratio() > 5.0,
+            "Q4_K_M should compress ~7x"
+        );
+        assert!(
+            (f16.compression_ratio() - 2.0).abs() < 0.1,
+            "F16 should compress 2x"
+        );
     }
 
     #[test]
     fn test_quantized_tensor_roundtrip() {
         let data: Vec<f32> = (0..256).map(|i| (i as f32 - 128.0) / 32.0).collect();
-        
-        for format in [QuantFormat::F32, QuantFormat::F16, QuantFormat::Q8_0, QuantFormat::Q4_0, QuantFormat::Q4_K_M] {
+
+        for format in [
+            QuantFormat::F32,
+            QuantFormat::F16,
+            QuantFormat::Q8_0,
+            QuantFormat::Q4_0,
+            QuantFormat::Q4_K_M,
+        ] {
             let quantized = QuantizedTensor::from_f32(&data, vec![256], format);
             let recovered = quantized.to_f32();
-            
-            assert_eq!(recovered.len(), data.len(), "Length mismatch for {:?}", format);
-            
+
+            assert_eq!(
+                recovered.len(),
+                data.len(),
+                "Length mismatch for {:?}",
+                format
+            );
+
             // For 4-bit formats, check average error instead of per-element tolerance
             // because individual elements can have larger errors
-            if matches!(format, QuantFormat::Q4_0 | QuantFormat::Q4_K_M | QuantFormat::Q4_K_S) {
-                let total_error: f32 = data.iter()
+            if matches!(
+                format,
+                QuantFormat::Q4_0 | QuantFormat::Q4_K_M | QuantFormat::Q4_K_S
+            ) {
+                let total_error: f32 = data
+                    .iter()
                     .zip(recovered.iter())
                     .map(|(o, r)| (o - r).abs())
                     .sum();
@@ -978,7 +1028,9 @@ mod tests {
                 assert!(
                     avg_error < tolerance,
                     "{:?} roundtrip avg error too high: {} (tolerance {})",
-                    format, avg_error, tolerance
+                    format,
+                    avg_error,
+                    tolerance
                 );
             } else {
                 // Check approximate equality (tolerance depends on format)
@@ -989,12 +1041,15 @@ mod tests {
                     QuantFormat::BF16 => 0.01,
                     _ => unreachable!(),
                 };
-                
+
                 for (orig, rec) in data.iter().zip(recovered.iter()) {
                     assert!(
                         (orig - rec).abs() < tolerance,
                         "{:?} roundtrip failed: {} vs {} (tolerance {})",
-                        format, orig, rec, tolerance
+                        format,
+                        orig,
+                        rec,
+                        tolerance
                     );
                 }
             }

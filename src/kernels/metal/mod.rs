@@ -57,10 +57,7 @@ pub use tensor::MetalTensor;
 
 use crate::kernels::backend::KernelBackend;
 use crate::tensor::{Tensor1, Tensor2};
-use metal::{
-    Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device,
-    Library, MTLSize,
-};
+use metal::{Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, Library, MTLSize};
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut1};
 use std::sync::Arc;
 
@@ -135,8 +132,8 @@ impl MetalBackend {
 
     /// Create a new Metal backend using the system default device.
     pub fn new() -> anyhow::Result<Self> {
-        let device = Device::system_default()
-            .ok_or_else(|| anyhow::anyhow!("No Metal device available"))?;
+        let device =
+            Device::system_default().ok_or_else(|| anyhow::anyhow!("No Metal device available"))?;
 
         let device_name = device.name().to_string();
 
@@ -273,8 +270,16 @@ impl MetalBackend {
         encoder.set_compute_pipeline_state(&self.pipelines.rmsnorm);
         encoder.set_buffer(0, Some(x), 0);
         encoder.set_buffer(1, Some(weight), 0);
-        encoder.set_bytes(2, std::mem::size_of::<i32>() as u64, &(n as i32) as *const i32 as *const _);
-        encoder.set_bytes(3, std::mem::size_of::<f32>() as u64, &eps as *const f32 as *const _);
+        encoder.set_bytes(
+            2,
+            std::mem::size_of::<i32>() as u64,
+            &(n as i32) as *const i32 as *const _,
+        );
+        encoder.set_bytes(
+            3,
+            std::mem::size_of::<f32>() as u64,
+            &eps as *const f32 as *const _,
+        );
 
         // Block size must be a power of 2 for correct parallel reduction
         let block_size = 256.max(n.next_power_of_two()).min(1024);
@@ -297,7 +302,11 @@ impl MetalBackend {
 
         encoder.set_compute_pipeline_state(&self.pipelines.softmax);
         encoder.set_buffer(0, Some(x), 0);
-        encoder.set_bytes(1, std::mem::size_of::<i32>() as u64, &(n as i32) as *const i32 as *const _);
+        encoder.set_bytes(
+            1,
+            std::mem::size_of::<i32>() as u64,
+            &(n as i32) as *const i32 as *const _,
+        );
 
         // Block size must be a power of 2 for correct parallel reduction
         // Use minimum of 256 threads (or next power of 2 >= n)
@@ -323,7 +332,11 @@ impl MetalBackend {
         encoder.set_compute_pipeline_state(&self.pipelines.silu);
         encoder.set_buffer(0, Some(x), 0);
         encoder.set_buffer(1, Some(y), 0);
-        encoder.set_bytes(2, std::mem::size_of::<i32>() as u64, &(n as i32) as *const i32 as *const _);
+        encoder.set_bytes(
+            2,
+            std::mem::size_of::<i32>() as u64,
+            &(n as i32) as *const i32 as *const _,
+        );
 
         let thread_count = n as u64;
         let threadgroup_size = 256u64.min(thread_count);
@@ -337,14 +350,7 @@ impl MetalBackend {
     }
 
     /// Launch RoPE kernel on GPU.
-    fn launch_rope(
-        &self,
-        x: &Buffer,
-        cos: &Buffer,
-        sin: &Buffer,
-        n_heads: usize,
-        head_dim: usize,
-    ) {
+    fn launch_rope(&self, x: &Buffer, cos: &Buffer, sin: &Buffer, n_heads: usize, head_dim: usize) {
         let half = head_dim / 2;
         let total = n_heads * half;
 
@@ -355,9 +361,21 @@ impl MetalBackend {
         encoder.set_buffer(0, Some(x), 0);
         encoder.set_buffer(1, Some(cos), 0);
         encoder.set_buffer(2, Some(sin), 0);
-        encoder.set_bytes(3, std::mem::size_of::<i32>() as u64, &(n_heads as i32) as *const i32 as *const _);
-        encoder.set_bytes(4, std::mem::size_of::<i32>() as u64, &(head_dim as i32) as *const i32 as *const _);
-        encoder.set_bytes(5, std::mem::size_of::<i32>() as u64, &(half as i32) as *const i32 as *const _);
+        encoder.set_bytes(
+            3,
+            std::mem::size_of::<i32>() as u64,
+            &(n_heads as i32) as *const i32 as *const _,
+        );
+        encoder.set_bytes(
+            4,
+            std::mem::size_of::<i32>() as u64,
+            &(head_dim as i32) as *const i32 as *const _,
+        );
+        encoder.set_bytes(
+            5,
+            std::mem::size_of::<i32>() as u64,
+            &(half as i32) as *const i32 as *const _,
+        );
 
         let thread_count = total as u64;
         let threadgroup_size = 256u64.min(thread_count);
@@ -387,9 +405,21 @@ impl MetalBackend {
         encoder.set_buffer(0, Some(query), 0);
         encoder.set_buffer(1, Some(keys), 0);
         encoder.set_buffer(2, Some(scores), 0);
-        encoder.set_bytes(3, std::mem::size_of::<i32>() as u64, &(seq_len as i32) as *const i32 as *const _);
-        encoder.set_bytes(4, std::mem::size_of::<i32>() as u64, &(head_dim as i32) as *const i32 as *const _);
-        encoder.set_bytes(5, std::mem::size_of::<f32>() as u64, &scale as *const f32 as *const _);
+        encoder.set_bytes(
+            3,
+            std::mem::size_of::<i32>() as u64,
+            &(seq_len as i32) as *const i32 as *const _,
+        );
+        encoder.set_bytes(
+            4,
+            std::mem::size_of::<i32>() as u64,
+            &(head_dim as i32) as *const i32 as *const _,
+        );
+        encoder.set_bytes(
+            5,
+            std::mem::size_of::<f32>() as u64,
+            &scale as *const f32 as *const _,
+        );
 
         let thread_count = seq_len as u64;
         let threadgroup_size = 256u64.min(thread_count);
@@ -403,7 +433,14 @@ impl MetalBackend {
     }
 
     /// Launch weighted sum kernel on GPU.
-    fn launch_weighted_sum(&self, weights: &Buffer, matrix: &Buffer, out: &Buffer, n: usize, d: usize) {
+    fn launch_weighted_sum(
+        &self,
+        weights: &Buffer,
+        matrix: &Buffer,
+        out: &Buffer,
+        n: usize,
+        d: usize,
+    ) {
         let command_buffer = self.command_queue.new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
 
@@ -411,8 +448,16 @@ impl MetalBackend {
         encoder.set_buffer(0, Some(weights), 0);
         encoder.set_buffer(1, Some(matrix), 0);
         encoder.set_buffer(2, Some(out), 0);
-        encoder.set_bytes(3, std::mem::size_of::<i32>() as u64, &(n as i32) as *const i32 as *const _);
-        encoder.set_bytes(4, std::mem::size_of::<i32>() as u64, &(d as i32) as *const i32 as *const _);
+        encoder.set_bytes(
+            3,
+            std::mem::size_of::<i32>() as u64,
+            &(n as i32) as *const i32 as *const _,
+        );
+        encoder.set_bytes(
+            4,
+            std::mem::size_of::<i32>() as u64,
+            &(d as i32) as *const i32 as *const _,
+        );
 
         let thread_count = d as u64;
         let threadgroup_size = 256u64.min(thread_count);
@@ -426,7 +471,14 @@ impl MetalBackend {
     }
 
     /// Launch matrix-vector multiplication kernel on GPU.
-    fn launch_matmul_vec(&self, weights: &Buffer, x: &Buffer, out: &Buffer, rows: usize, cols: usize) {
+    fn launch_matmul_vec(
+        &self,
+        weights: &Buffer,
+        x: &Buffer,
+        out: &Buffer,
+        rows: usize,
+        cols: usize,
+    ) {
         let command_buffer = self.command_queue.new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
 
@@ -434,8 +486,16 @@ impl MetalBackend {
         encoder.set_buffer(0, Some(weights), 0);
         encoder.set_buffer(1, Some(x), 0);
         encoder.set_buffer(2, Some(out), 0);
-        encoder.set_bytes(3, std::mem::size_of::<i32>() as u64, &(rows as i32) as *const i32 as *const _);
-        encoder.set_bytes(4, std::mem::size_of::<i32>() as u64, &(cols as i32) as *const i32 as *const _);
+        encoder.set_bytes(
+            3,
+            std::mem::size_of::<i32>() as u64,
+            &(rows as i32) as *const i32 as *const _,
+        );
+        encoder.set_bytes(
+            4,
+            std::mem::size_of::<i32>() as u64,
+            &(cols as i32) as *const i32 as *const _,
+        );
 
         let thread_count = rows as u64;
         let threadgroup_size = 256u64.min(thread_count);
@@ -469,12 +529,8 @@ impl KernelBackend for MetalBackend {
         let (rows, cols) = w.dim();
 
         // Create GPU buffers
-        let w_buffer = self.create_buffer(
-            w.as_slice().expect("Weight matrix must be contiguous"),
-        );
-        let x_buffer = self.create_buffer(
-            x.as_slice().expect("Input vector must be contiguous"),
-        );
+        let w_buffer = self.create_buffer(w.as_slice().expect("Weight matrix must be contiguous"));
+        let x_buffer = self.create_buffer(x.as_slice().expect("Input vector must be contiguous"));
         let out_buffer = self.create_buffer_zeros(rows);
 
         // Launch kernel
@@ -508,7 +564,8 @@ impl KernelBackend for MetalBackend {
 
         // Create GPU buffer with data
         let x_buffer = self.create_buffer(x.as_slice().expect("x must be contiguous"));
-        let weight_buffer = self.create_buffer(weight.as_slice().expect("weight must be contiguous"));
+        let weight_buffer =
+            self.create_buffer(weight.as_slice().expect("weight must be contiguous"));
 
         // Launch kernel
         self.launch_rmsnorm(&x_buffer, &weight_buffer, n, eps);
@@ -595,12 +652,10 @@ impl KernelBackend for MetalBackend {
         let query_owned = query.to_owned();
         let keys_owned = keys.to_owned();
 
-        let query_buffer = self.create_buffer(
-            query_owned.as_slice().expect("query must be contiguous"),
-        );
-        let keys_buffer = self.create_buffer(
-            keys_owned.as_slice().expect("keys must be contiguous"),
-        );
+        let query_buffer =
+            self.create_buffer(query_owned.as_slice().expect("query must be contiguous"));
+        let keys_buffer =
+            self.create_buffer(keys_owned.as_slice().expect("keys must be contiguous"));
         let scores_buffer = self.create_buffer_zeros(seq_len);
 
         // Launch kernel
@@ -632,11 +687,12 @@ impl KernelBackend for MetalBackend {
         let matrix_owned = matrix.to_owned();
 
         let weights_buffer = self.create_buffer(
-            weights_owned.as_slice().expect("weights must be contiguous"),
+            weights_owned
+                .as_slice()
+                .expect("weights must be contiguous"),
         );
-        let matrix_buffer = self.create_buffer(
-            matrix_owned.as_slice().expect("matrix must be contiguous"),
-        );
+        let matrix_buffer =
+            self.create_buffer(matrix_owned.as_slice().expect("matrix must be contiguous"));
         let out_buffer = self.create_buffer_zeros(d);
 
         // Launch kernel

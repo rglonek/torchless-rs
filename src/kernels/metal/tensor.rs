@@ -129,9 +129,7 @@ impl MetalTensor {
     /// This is safe on Apple Silicon due to unified memory, but the caller
     /// must ensure no GPU operations are in flight that might modify the data.
     pub fn as_slice(&self) -> &[f32] {
-        unsafe {
-            std::slice::from_raw_parts(self.buffer.contents() as *const f32, self.len)
-        }
+        unsafe { std::slice::from_raw_parts(self.buffer.contents() as *const f32, self.len) }
     }
 
     /// Get a mutable slice view of the data (unified memory access).
@@ -140,9 +138,7 @@ impl MetalTensor {
     /// This is safe on Apple Silicon due to unified memory, but the caller
     /// must ensure no GPU operations are in flight that might modify the data.
     pub fn as_slice_mut(&self) -> &mut [f32] {
-        unsafe {
-            std::slice::from_raw_parts_mut(self.buffer.contents() as *mut f32, self.len)
-        }
+        unsafe { std::slice::from_raw_parts_mut(self.buffer.contents() as *mut f32, self.len) }
     }
 
     /// Copy data to a new Vec (unified memory, so this is a direct copy).

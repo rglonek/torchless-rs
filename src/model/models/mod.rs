@@ -13,19 +13,19 @@
 //! - RoPE scaling methods
 //! - Attention patterns
 
+pub mod gemma;
 pub mod llama;
 pub mod phi;
-pub mod gemma;
 pub mod qwen;
 
-pub use llama::{LLaMA, LazyLLaMA};
-pub use phi::{Phi, LazyPhi};
 pub use gemma::{Gemma, LazyGemma};
-pub use qwen::{Qwen, LazyQwen};
+pub use llama::{LLaMA, LazyLLaMA};
+pub use phi::{LazyPhi, Phi};
+pub use qwen::{LazyQwen, Qwen};
 
 use crate::loader::{Config, Parameters};
-use crate::model::{InferenceState, Mistral, LazyMistral};
-use crate::model::architecture::{ModelArchitecture, detect_architecture_from_tensors};
+use crate::model::architecture::{detect_architecture_from_tensors, ModelArchitecture};
+use crate::model::{InferenceState, LazyMistral, Mistral};
 use anyhow::Result;
 
 /// Dynamic model enum for runtime polymorphism
@@ -82,7 +82,10 @@ impl<'a> DynamicModel<'a> {
     }
 
     /// Load model with specific architecture
-    pub fn load_with_arch(params: Parameters, architecture: ModelArchitecture) -> Result<DynamicModel<'static>> {
+    pub fn load_with_arch(
+        params: Parameters,
+        architecture: ModelArchitecture,
+    ) -> Result<DynamicModel<'static>> {
         eprintln!("Loading model as: {}", architecture);
 
         match architecture {

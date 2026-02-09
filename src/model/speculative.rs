@@ -118,16 +118,16 @@ impl SpeculativeStats {
 pub trait SpeculativeModel {
     /// Run forward pass for a single token and return next token probabilities.
     fn forward(&self, state: &mut InferenceState, token: u32);
-    
+
     /// Get the vocabulary size.
     fn vocab_size(&self) -> usize;
-    
+
     /// Get the current logits after a forward pass.
     fn get_logits<'a>(&self, state: &'a InferenceState) -> &'a [f32];
-    
+
     /// Clone the KV cache state (for speculative rollback).
     fn save_cache_state(&self, state: &InferenceState) -> CacheState;
-    
+
     /// Restore the KV cache state.
     fn restore_cache_state(&self, state: &mut InferenceState, cache: &CacheState);
 }
@@ -164,11 +164,7 @@ impl<'a> SpeculativeDecoder<'a> {
     /// * `main_forward` - Function to run main model forward pass
     /// * `draft_forward` - Function to run draft model forward pass
     /// * `config` - Speculative decoding configuration
-    pub fn new<MF, DF>(
-        main_forward: MF,
-        draft_forward: DF,
-        config: SpeculativeConfig,
-    ) -> Self 
+    pub fn new<MF, DF>(main_forward: MF, draft_forward: DF, config: SpeculativeConfig) -> Self
     where
         MF: Fn(&mut InferenceState, u32) + 'a,
         DF: Fn(&mut InferenceState, u32) + 'a,
@@ -207,57 +203,65 @@ impl<'a> SpeculativeDecoder<'a> {
     ) -> Vec<u32> {
         let mut rng = rand::thread_rng();
         let speculation_length = if self.config.adaptive {
-            self.stats.current_speculation_length.max(self.config.min_speculation)
+            self.stats
+                .current_speculation_length
+                .max(self.config.min_speculation)
         } else {
             self.config.speculation_length
         };
-        
+
         // Phase 1: Draft model generates K candidate tokens
         let mut draft_tokens = Vec::with_capacity(speculation_length);
         let mut draft_probs = Vec::with_capacity(speculation_length);
-        
+
         let mut current_token = context_token;
         for _ in 0..speculation_length {
             (self.draft_forward)(draft_state, current_token);
-            
+
             // Get probabilities from draft model
-            let probs = softmax_with_temperature(&draft_state.logits.as_slice().unwrap(), self.config.temperature);
-            
+            let probs = softmax_with_temperature(
+                &draft_state.logits.as_slice().unwrap(),
+                self.config.temperature,
+            );
+
             // Sample next token
             let next_token = sample_from_probs(&probs, &mut rng);
             let prob = probs[next_token as usize];
-            
+
             draft_tokens.push(next_token);
             draft_probs.push((next_token, prob));
             current_token = next_token;
             draft_state.pos += 1;
         }
-        
+
         // Phase 2: Main model verifies all tokens
         // Run main model on context_token and all draft tokens
         let mut accepted_tokens = Vec::new();
         let mut main_token = context_token;
-        
+
         for i in 0..draft_tokens.len() {
             (self.main_forward)(main_state, main_token);
-            
+
             // Get main model probabilities
-            let main_probs = softmax_with_temperature(&main_state.logits.as_slice().unwrap(), self.config.temperature);
-            
+            let main_probs = softmax_with_temperature(
+                &main_state.logits.as_slice().unwrap(),
+                self.config.temperature,
+            );
+
             // Get the draft token and its probability under both models
             let draft_token = draft_tokens[i];
             let (_, draft_prob) = draft_probs[i];
             let main_prob = main_probs[draft_token as usize];
-            
+
             // Rejection sampling: accept with probability min(1, main_prob / draft_prob)
             let accept_prob = if draft_prob > 0.0 {
                 (main_prob / draft_prob).min(1.0)
             } else {
                 0.0
             };
-            
+
             let random_val: f32 = rng.gen();
-            
+
             if random_val < accept_prob {
                 // Accept the draft token
                 accepted_tokens.push(draft_token);
@@ -266,46 +270,59 @@ impl<'a> SpeculativeDecoder<'a> {
                 self.stats.tokens_accepted += 1;
             } else {
                 // Reject: sample from adjusted distribution
-                let adjusted_probs = adjust_distribution(&main_probs, &softmax_with_temperature(
-                    &draft_state.logits.as_slice().unwrap(), 
-                    self.config.temperature
-                ));
+                let adjusted_probs = adjust_distribution(
+                    &main_probs,
+                    &softmax_with_temperature(
+                        &draft_state.logits.as_slice().unwrap(),
+                        self.config.temperature,
+                    ),
+                );
                 let corrected_token = sample_from_probs(&adjusted_probs, &mut rng);
                 accepted_tokens.push(corrected_token);
                 main_state.pos += 1;
                 self.stats.tokens_rejected += 1;
-                
+
                 // Don't continue verifying after rejection
                 break;
             }
         }
-        
+
         // If all draft tokens were accepted, sample one more from main model
         if accepted_tokens.len() == draft_tokens.len() {
-            (self.main_forward)(main_state, *accepted_tokens.last().unwrap_or(&context_token));
-            let main_probs = softmax_with_temperature(&main_state.logits.as_slice().unwrap(), self.config.temperature);
+            (self.main_forward)(
+                main_state,
+                *accepted_tokens.last().unwrap_or(&context_token),
+            );
+            let main_probs = softmax_with_temperature(
+                &main_state.logits.as_slice().unwrap(),
+                self.config.temperature,
+            );
             let bonus_token = sample_from_probs(&main_probs, &mut rng);
             accepted_tokens.push(bonus_token);
             main_state.pos += 1;
         }
-        
+
         // Update statistics
         self.stats.tokens_generated += accepted_tokens.len();
         self.stats.iterations += 1;
-        
+
         // Adaptive speculation length adjustment
         if self.config.adaptive {
             let acceptance_rate = self.stats.acceptance_rate();
-            if acceptance_rate > 0.9 && self.stats.current_speculation_length < self.config.max_speculation {
+            if acceptance_rate > 0.9
+                && self.stats.current_speculation_length < self.config.max_speculation
+            {
                 self.stats.current_speculation_length += 1;
-            } else if acceptance_rate < 0.5 && self.stats.current_speculation_length > self.config.min_speculation {
+            } else if acceptance_rate < 0.5
+                && self.stats.current_speculation_length > self.config.min_speculation
+            {
                 self.stats.current_speculation_length -= 1;
             }
         }
-        
+
         // Sync draft state position with main state
         draft_state.pos = main_state.pos;
-        
+
         accepted_tokens
     }
 }
@@ -335,7 +352,7 @@ impl<'a> SelfSpeculativeDecoder<'a> {
         config: SpeculativeConfig,
         draft_temperature: f32,
         main_temperature: f32,
-    ) -> Self 
+    ) -> Self
     where
         F: Fn(&mut InferenceState, u32) + 'a,
     {
@@ -349,57 +366,55 @@ impl<'a> SelfSpeculativeDecoder<'a> {
     }
 
     /// Generate tokens using self-speculative decoding.
-    pub fn generate_step(
-        &mut self,
-        state: &mut InferenceState,
-        context_token: u32,
-    ) -> Vec<u32> {
+    pub fn generate_step(&mut self, state: &mut InferenceState, context_token: u32) -> Vec<u32> {
         let mut rng = rand::thread_rng();
         let speculation_length = self.config.speculation_length;
-        
+
         // Save initial position
         let start_pos = state.pos;
-        
+
         // Phase 1: Generate draft tokens with higher temperature (more random)
         let mut draft_tokens = Vec::with_capacity(speculation_length);
         let mut draft_probs = Vec::with_capacity(speculation_length);
-        
+
         let mut current_token = context_token;
         for _ in 0..speculation_length {
             (self.forward)(state, current_token);
-            
-            let probs = softmax_with_temperature(&state.logits.as_slice().unwrap(), self.draft_temperature);
+
+            let probs =
+                softmax_with_temperature(&state.logits.as_slice().unwrap(), self.draft_temperature);
             let next_token = sample_from_probs(&probs, &mut rng);
             let prob = probs[next_token as usize];
-            
+
             draft_tokens.push(next_token);
             draft_probs.push(prob);
             current_token = next_token;
             state.pos += 1;
         }
-        
+
         // Phase 2: Verify with main temperature
         // Reset to start position
         state.pos = start_pos;
-        
+
         let mut accepted_tokens = Vec::new();
         current_token = context_token;
-        
+
         for i in 0..draft_tokens.len() {
             (self.forward)(state, current_token);
-            
-            let main_probs = softmax_with_temperature(&state.logits.as_slice().unwrap(), self.main_temperature);
+
+            let main_probs =
+                softmax_with_temperature(&state.logits.as_slice().unwrap(), self.main_temperature);
             let draft_token = draft_tokens[i];
             let draft_prob = draft_probs[i];
             let main_prob = main_probs[draft_token as usize];
-            
+
             // Acceptance probability
             let accept_prob = if draft_prob > 0.0 {
                 (main_prob / draft_prob).min(1.0)
             } else {
                 0.0
             };
-            
+
             if rng.gen::<f32>() < accept_prob {
                 accepted_tokens.push(draft_token);
                 state.pos += 1;
@@ -414,19 +429,20 @@ impl<'a> SelfSpeculativeDecoder<'a> {
                 break;
             }
         }
-        
+
         // Bonus token if all accepted
         if accepted_tokens.len() == draft_tokens.len() {
             (self.forward)(state, *accepted_tokens.last().unwrap_or(&context_token));
-            let main_probs = softmax_with_temperature(&state.logits.as_slice().unwrap(), self.main_temperature);
+            let main_probs =
+                softmax_with_temperature(&state.logits.as_slice().unwrap(), self.main_temperature);
             let bonus_token = sample_from_probs(&main_probs, &mut rng);
             accepted_tokens.push(bonus_token);
             state.pos += 1;
         }
-        
+
         self.stats.tokens_generated += accepted_tokens.len();
         self.stats.iterations += 1;
-        
+
         accepted_tokens
     }
 
@@ -449,18 +465,22 @@ pub struct LookaheadDecoder {
 
 impl LookaheadDecoder {
     pub fn new(lookahead: usize, temperature: f32) -> Self {
-        Self { lookahead, temperature }
+        Self {
+            lookahead,
+            temperature,
+        }
     }
 
     /// Generate greedy lookahead tokens (returns top-k most likely sequences).
     pub fn generate_candidates(&self, logits: &[f32], top_k: usize) -> Vec<(u32, f32)> {
         let probs = softmax_with_temperature(logits, self.temperature);
-        
+
         // Get top-k tokens and their probabilities
         let mut indexed: Vec<(usize, f32)> = probs.iter().copied().enumerate().collect();
         indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        
-        indexed.into_iter()
+
+        indexed
+            .into_iter()
             .take(top_k)
             .map(|(idx, prob)| (idx as u32, prob))
             .collect()
@@ -473,24 +493,28 @@ impl LookaheadDecoder {
 
 /// Apply softmax with temperature scaling.
 fn softmax_with_temperature(logits: &[f32], temperature: f32) -> Vec<f32> {
-    let temp = if temperature <= 0.0 { 1e-8 } else { temperature };
-    
+    let temp = if temperature <= 0.0 {
+        1e-8
+    } else {
+        temperature
+    };
+
     // Scale by temperature
     let scaled: Vec<f32> = logits.iter().map(|&x| x / temp).collect();
-    
+
     // Find max for numerical stability
     let max_val = scaled.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    
+
     // Compute exp and sum
     let mut probs: Vec<f32> = scaled.iter().map(|&x| (x - max_val).exp()).collect();
     let sum: f32 = probs.iter().sum();
-    
+
     // Normalize
     let inv_sum = 1.0 / sum;
     for p in probs.iter_mut() {
         *p *= inv_sum;
     }
-    
+
     probs
 }
 
@@ -498,25 +522,26 @@ fn softmax_with_temperature(logits: &[f32], temperature: f32) -> Vec<f32> {
 fn sample_from_probs<R: Rng>(probs: &[f32], rng: &mut R) -> u32 {
     let r: f32 = rng.gen();
     let mut cumsum = 0.0;
-    
+
     for (i, &p) in probs.iter().enumerate() {
         cumsum += p;
         if cumsum >= r {
             return i as u32;
         }
     }
-    
+
     (probs.len() - 1) as u32
 }
 
 /// Adjust distribution for rejection sampling correction.
 /// Returns max(0, main_probs - draft_probs) normalized.
 fn adjust_distribution(main_probs: &[f32], draft_probs: &[f32]) -> Vec<f32> {
-    let mut adjusted: Vec<f32> = main_probs.iter()
+    let mut adjusted: Vec<f32> = main_probs
+        .iter()
         .zip(draft_probs.iter())
         .map(|(&m, &d)| (m - d).max(0.0))
         .collect();
-    
+
     let sum: f32 = adjusted.iter().sum();
     if sum > 0.0 {
         let inv_sum = 1.0 / sum;
@@ -527,7 +552,7 @@ fn adjust_distribution(main_probs: &[f32], draft_probs: &[f32]) -> Vec<f32> {
         // Fallback to main distribution if adjustment is all zeros
         adjusted.copy_from_slice(main_probs);
     }
-    
+
     adjusted
 }
 
@@ -608,17 +633,23 @@ mod tests {
     #[test]
     fn test_softmax_with_temperature() {
         let logits = vec![1.0, 2.0, 3.0, 4.0];
-        
+
         // Temperature 1.0 should give standard softmax
         let probs = softmax_with_temperature(&logits, 1.0);
         assert!((probs.iter().sum::<f32>() - 1.0).abs() < 1e-6);
-        
+
         // Higher temperature should make distribution more uniform
         let probs_high = softmax_with_temperature(&logits, 2.0);
-        let entropy_high: f32 = probs_high.iter().map(|&p| if p > 0.0 { -p * p.ln() } else { 0.0 }).sum();
-        let entropy_low: f32 = probs.iter().map(|&p| if p > 0.0 { -p * p.ln() } else { 0.0 }).sum();
+        let entropy_high: f32 = probs_high
+            .iter()
+            .map(|&p| if p > 0.0 { -p * p.ln() } else { 0.0 })
+            .sum();
+        let entropy_low: f32 = probs
+            .iter()
+            .map(|&p| if p > 0.0 { -p * p.ln() } else { 0.0 })
+            .sum();
         assert!(entropy_high > entropy_low);
-        
+
         // Very low temperature should approach one-hot
         let probs_cold = softmax_with_temperature(&logits, 0.01);
         assert!(probs_cold[3] > 0.99); // Highest logit should dominate
@@ -628,7 +659,7 @@ mod tests {
     fn test_sample_from_probs() {
         let probs = vec![0.0, 0.0, 1.0, 0.0]; // Deterministic
         let mut rng = rand::thread_rng();
-        
+
         for _ in 0..10 {
             let token = sample_from_probs(&probs, &mut rng);
             assert_eq!(token, 2);
@@ -639,15 +670,15 @@ mod tests {
     fn test_adjust_distribution() {
         let main = vec![0.3, 0.3, 0.2, 0.2];
         let draft = vec![0.1, 0.4, 0.3, 0.2];
-        
+
         let adjusted = adjust_distribution(&main, &draft);
-        
+
         // Should sum to 1
         assert!((adjusted.iter().sum::<f32>() - 1.0).abs() < 1e-6);
-        
+
         // main[0] > draft[0], so adjusted[0] > 0
         assert!(adjusted[0] > 0.0);
-        
+
         // main[1] < draft[1], so adjusted[1] = 0
         assert!(adjusted[1].abs() < 1e-6);
     }
@@ -655,19 +686,19 @@ mod tests {
     #[test]
     fn test_token_buffer() {
         let mut buffer = TokenBuffer::new();
-        
+
         buffer.commit(1);
         buffer.commit(2);
         assert_eq!(buffer.len(), 2);
         assert_eq!(buffer.last(), Some(2));
-        
+
         buffer.add_pending(&[3, 4, 5]);
         assert_eq!(buffer.len(), 2); // Only committed counts
-        
+
         buffer.accept(2);
         assert_eq!(buffer.len(), 4);
         assert_eq!(buffer.tokens(), &[1, 2, 3, 4]);
-        
+
         buffer.reject_all();
         assert_eq!(buffer.len(), 4); // Committed unchanged
     }
@@ -675,12 +706,12 @@ mod tests {
     #[test]
     fn test_speculative_stats() {
         let mut stats = SpeculativeStats::default();
-        
+
         stats.tokens_accepted = 8;
         stats.tokens_rejected = 2;
         stats.tokens_generated = 12;
         stats.iterations = 3;
-        
+
         assert!((stats.acceptance_rate() - 0.8).abs() < 1e-6);
         assert!((stats.tokens_per_iteration() - 4.0).abs() < 1e-6);
     }
@@ -689,9 +720,9 @@ mod tests {
     fn test_lookahead_decoder() {
         let decoder = LookaheadDecoder::new(4, 1.0);
         let logits = vec![1.0, 5.0, 2.0, 8.0, 3.0];
-        
+
         let candidates = decoder.generate_candidates(&logits, 3);
-        
+
         assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].0, 3); // Highest logit
         assert!(candidates[0].1 > candidates[1].1); // Sorted by probability

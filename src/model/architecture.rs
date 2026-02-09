@@ -193,7 +193,11 @@ impl TensorNamePattern {
 
     /// Format layer tensor name
     pub fn layer_tensor(&self, layer_idx: usize, suffix: &str) -> String {
-        format!("{}.{}", self.layer_prefix.replace("{}", &layer_idx.to_string()), suffix)
+        format!(
+            "{}.{}",
+            self.layer_prefix.replace("{}", &layer_idx.to_string()),
+            suffix
+        )
     }
 
     /// Get Q projection name for layer
@@ -273,9 +277,15 @@ pub enum RopeScaling {
     /// Linear scaling
     Linear { factor: f32 },
     /// Dynamic NTK scaling
-    DynamicNTK { factor: f32, original_max_position: usize },
+    DynamicNTK {
+        factor: f32,
+        original_max_position: usize,
+    },
     /// YaRN scaling (used in LLaMA 3)
-    YaRN { factor: f32, original_max_position: usize },
+    YaRN {
+        factor: f32,
+        original_max_position: usize,
+    },
 }
 
 /// Activation function types
@@ -430,7 +440,10 @@ pub fn detect_architecture_from_tensors(tensor_names: &[String]) -> ModelArchite
     let names_set: HashSet<&str> = tensor_names.iter().map(|s| s.as_str()).collect();
 
     // Check for Qwen-specific patterns
-    if names_set.iter().any(|n| n.contains("transformer.h.") && n.contains("attn.c_attn")) {
+    if names_set
+        .iter()
+        .any(|n| n.contains("transformer.h.") && n.contains("attn.c_attn"))
+    {
         return ModelArchitecture::Qwen;
     }
 
@@ -440,13 +453,19 @@ pub fn detect_architecture_from_tensors(tensor_names: &[String]) -> ModelArchite
     }
 
     // Check for Gemma-specific patterns (post_feedforward_layernorm)
-    if names_set.iter().any(|n| n.contains("post_feedforward_layernorm")) {
+    if names_set
+        .iter()
+        .any(|n| n.contains("post_feedforward_layernorm"))
+    {
         return ModelArchitecture::Gemma;
     }
 
     // Check for standard Mistral/LLaMA patterns
     // These are very similar, so we default to Mistral unless we have explicit LLaMA markers
-    if names_set.iter().any(|n| n.contains("model.layers.") && n.contains("self_attn")) {
+    if names_set
+        .iter()
+        .any(|n| n.contains("model.layers.") && n.contains("self_attn"))
+    {
         // Could be either Mistral or LLaMA - need additional heuristics
         // Check for sliding_window in config or other Mistral-specific features
         return ModelArchitecture::Mistral; // Default to Mistral
@@ -533,19 +552,40 @@ mod tests {
 
     #[test]
     fn test_architecture_from_str() {
-        assert_eq!(ModelArchitecture::from_str("mistral"), ModelArchitecture::Mistral);
-        assert_eq!(ModelArchitecture::from_str("LLAMA"), ModelArchitecture::LLaMA);
+        assert_eq!(
+            ModelArchitecture::from_str("mistral"),
+            ModelArchitecture::Mistral
+        );
+        assert_eq!(
+            ModelArchitecture::from_str("LLAMA"),
+            ModelArchitecture::LLaMA
+        );
         assert_eq!(ModelArchitecture::from_str("Phi-3"), ModelArchitecture::Phi);
-        assert_eq!(ModelArchitecture::from_str("gemma"), ModelArchitecture::Gemma);
-        assert_eq!(ModelArchitecture::from_str("qwen2"), ModelArchitecture::Qwen);
-        assert_eq!(ModelArchitecture::from_str("unknown"), ModelArchitecture::Unknown);
+        assert_eq!(
+            ModelArchitecture::from_str("gemma"),
+            ModelArchitecture::Gemma
+        );
+        assert_eq!(
+            ModelArchitecture::from_str("qwen2"),
+            ModelArchitecture::Qwen
+        );
+        assert_eq!(
+            ModelArchitecture::from_str("unknown"),
+            ModelArchitecture::Unknown
+        );
     }
 
     #[test]
     fn test_tensor_name_pattern() {
         let pattern = TensorNamePattern::mistral();
-        assert_eq!(pattern.q_proj_name(5), "model.layers.5.self_attn.q_proj.weight");
-        assert_eq!(pattern.gate_proj_name(0), "model.layers.0.mlp.gate_proj.weight");
+        assert_eq!(
+            pattern.q_proj_name(5),
+            "model.layers.5.self_attn.q_proj.weight"
+        );
+        assert_eq!(
+            pattern.gate_proj_name(0),
+            "model.layers.0.mlp.gate_proj.weight"
+        );
     }
 
     #[test]
@@ -555,21 +595,30 @@ mod tests {
             "model.layers.0.post_feedforward_layernorm.weight".to_string(),
             "model.embed_tokens.weight".to_string(),
         ];
-        assert_eq!(detect_architecture_from_tensors(&gemma_tensors), ModelArchitecture::Gemma);
+        assert_eq!(
+            detect_architecture_from_tensors(&gemma_tensors),
+            ModelArchitecture::Gemma
+        );
 
         // Phi-specific tensor names
         let phi_tensors = vec![
             "model.final_layernorm.weight".to_string(),
             "model.layers.0.input_layernorm.weight".to_string(),
         ];
-        assert_eq!(detect_architecture_from_tensors(&phi_tensors), ModelArchitecture::Phi);
+        assert_eq!(
+            detect_architecture_from_tensors(&phi_tensors),
+            ModelArchitecture::Phi
+        );
 
         // Qwen-specific tensor names
         let qwen_tensors = vec![
             "transformer.h.0.attn.c_attn.weight".to_string(),
             "transformer.wte.weight".to_string(),
         ];
-        assert_eq!(detect_architecture_from_tensors(&qwen_tensors), ModelArchitecture::Qwen);
+        assert_eq!(
+            detect_architecture_from_tensors(&qwen_tensors),
+            ModelArchitecture::Qwen
+        );
     }
 
     #[test]

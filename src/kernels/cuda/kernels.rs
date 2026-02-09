@@ -36,7 +36,7 @@ pub fn num_blocks(n_elements: usize, block_size: u32) -> u32 {
 pub fn launch_config_1d(n_elements: usize) -> LaunchConfig {
     let block_size = optimal_block_size(n_elements);
     let num_blocks = num_blocks(n_elements, block_size);
-    
+
     LaunchConfig {
         block_dim: (block_size, 1, 1),
         grid_dim: (num_blocks, 1, 1),
@@ -49,7 +49,7 @@ pub fn launch_config_1d_shared(n_elements: usize, shared_bytes_per_thread: u32) 
     let block_size = optimal_block_size(n_elements);
     let num_blocks = num_blocks(n_elements, block_size);
     let shared_mem = block_size * shared_bytes_per_thread;
-    
+
     LaunchConfig {
         block_dim: (block_size, 1, 1),
         grid_dim: (num_blocks, 1, 1),
@@ -62,10 +62,10 @@ pub fn launch_config_2d(rows: usize, cols: usize) -> LaunchConfig {
     // Use 16x16 thread blocks for 2D kernels
     let block_x = 16u32;
     let block_y = 16u32;
-    
+
     let grid_x = cols.div_ceil(block_x as usize) as u32;
     let grid_y = rows.div_ceil(block_y as usize) as u32;
-    
+
     LaunchConfig {
         block_dim: (block_x, block_y, 1),
         grid_dim: (grid_x, grid_y, 1),
@@ -78,7 +78,7 @@ pub fn launch_config_2d(rows: usize, cols: usize) -> LaunchConfig {
 // =============================================================================
 
 /// Additional CUDA kernel source for FP16 operations.
-/// 
+///
 /// These kernels use CUDA's half-precision types for memory-efficient
 /// operations. They are compiled separately when FP16 support is needed.
 pub const FP16_KERNELS_SOURCE: &str = r#"

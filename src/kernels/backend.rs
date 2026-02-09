@@ -708,7 +708,8 @@ impl DeviceInfo {
 
     /// Get free memory in GB (if available).
     pub fn free_memory_gb(&self) -> Option<f64> {
-        self.free_memory.map(|m| m as f64 / 1024.0 / 1024.0 / 1024.0)
+        self.free_memory
+            .map(|m| m as f64 / 1024.0 / 1024.0 / 1024.0)
     }
 
     /// Check if device can fit a model of given size.
@@ -724,7 +725,13 @@ impl DeviceInfo {
 
 impl std::fmt::Display for DeviceInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}] {}: {:.2} GB", self.index, self.name, self.total_memory_gb())?;
+        write!(
+            f,
+            "[{}] {}: {:.2} GB",
+            self.index,
+            self.name,
+            self.total_memory_gb()
+        )?;
         if let Some(free_gb) = self.free_memory_gb() {
             write!(f, " ({:.2} GB free)", free_gb)?;
         }
@@ -924,8 +931,10 @@ fn discover_cuda() -> BackendInfo {
                 match CudaDevice::new(i) {
                     Ok(device) => {
                         // Get device properties
-                        let name = device.name().unwrap_or_else(|_| format!("CUDA Device {}", i));
-                        
+                        let name = device
+                            .name()
+                            .unwrap_or_else(|_| format!("CUDA Device {}", i));
+
                         // Note: cudarc doesn't expose memory info directly
                         // We'd need to call CUDA runtime APIs for that
                         // For now, use a reasonable estimate
@@ -1035,7 +1044,7 @@ fn discover_metal() -> BackendInfo {
 
 #[cfg(feature = "opencl")]
 fn discover_opencl() -> BackendInfo {
-    use ocl::{Platform, Device as OclDevice};
+    use ocl::{Device as OclDevice, Platform};
 
     let mut devices = Vec::new();
     let mut available = false;
@@ -1106,7 +1115,10 @@ fn get_cpu_name() -> String {
     #[cfg(target_os = "macos")]
     {
         use std::process::Command;
-        if let Ok(output) = Command::new("sysctl").args(["-n", "machdep.cpu.brand_string"]).output() {
+        if let Ok(output) = Command::new("sysctl")
+            .args(["-n", "machdep.cpu.brand_string"])
+            .output()
+        {
             if output.status.success() {
                 if let Ok(name) = String::from_utf8(output.stdout) {
                     return name.trim().to_string();
@@ -1285,10 +1297,15 @@ pub fn init_backend_with_memory_check(
         }
         #[cfg(feature = "cuda")]
         BackendPreference::Cuda => {
-            let cuda_info = backends.iter().find(|b| b.backend_type == BackendType::Cuda);
+            let cuda_info = backends
+                .iter()
+                .find(|b| b.backend_type == BackendType::Cuda);
             if let Some(info) = cuda_info {
                 if !info.available {
-                    anyhow::bail!("CUDA not available: {}", info.error.as_deref().unwrap_or("Unknown error"));
+                    anyhow::bail!(
+                        "CUDA not available: {}",
+                        info.error.as_deref().unwrap_or("Unknown error")
+                    );
                 }
                 if let Some(device) = info.devices.first() {
                     if !device.can_fit(required_bytes) {
@@ -1305,20 +1322,30 @@ pub fn init_backend_with_memory_check(
         }
         #[cfg(feature = "rocm")]
         BackendPreference::Rocm => {
-            let rocm_info = backends.iter().find(|b| b.backend_type == BackendType::Rocm);
+            let rocm_info = backends
+                .iter()
+                .find(|b| b.backend_type == BackendType::Rocm);
             if let Some(info) = rocm_info {
                 if !info.available {
-                    anyhow::bail!("ROCm not available: {}", info.error.as_deref().unwrap_or("Unknown error"));
+                    anyhow::bail!(
+                        "ROCm not available: {}",
+                        info.error.as_deref().unwrap_or("Unknown error")
+                    );
                 }
             }
             Ok(Backend::Rocm(RocmBackend::new()?))
         }
         #[cfg(feature = "metal-gpu")]
         BackendPreference::Metal => {
-            let metal_info = backends.iter().find(|b| b.backend_type == BackendType::Metal);
+            let metal_info = backends
+                .iter()
+                .find(|b| b.backend_type == BackendType::Metal);
             if let Some(info) = metal_info {
                 if !info.available {
-                    anyhow::bail!("Metal not available: {}", info.error.as_deref().unwrap_or("Unknown error"));
+                    anyhow::bail!(
+                        "Metal not available: {}",
+                        info.error.as_deref().unwrap_or("Unknown error")
+                    );
                 }
                 if let Some(device) = info.devices.first() {
                     if !device.can_fit(required_bytes) {
@@ -1335,10 +1362,15 @@ pub fn init_backend_with_memory_check(
         }
         #[cfg(feature = "opencl")]
         BackendPreference::OpenCL => {
-            let opencl_info = backends.iter().find(|b| b.backend_type == BackendType::OpenCL);
+            let opencl_info = backends
+                .iter()
+                .find(|b| b.backend_type == BackendType::OpenCL);
             if let Some(info) = opencl_info {
                 if !info.available {
-                    anyhow::bail!("OpenCL not available: {}", info.error.as_deref().unwrap_or("Unknown error"));
+                    anyhow::bail!(
+                        "OpenCL not available: {}",
+                        info.error.as_deref().unwrap_or("Unknown error")
+                    );
                 }
             }
             Ok(Backend::OpenCL(OpenCLBackend::new()?))

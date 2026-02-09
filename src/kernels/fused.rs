@@ -16,9 +16,9 @@
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut1};
 
 /// Fused RMSNorm + Linear projection
-/// 
+///
 /// Combines: y = Linear(RMSNorm(x, weight_norm, eps), weight_proj)
-/// 
+///
 /// This avoids materializing the intermediate normalized tensor.
 ///
 /// # Arguments
@@ -40,7 +40,9 @@ pub fn fused_rmsnorm_linear(
     debug_assert_eq!(weight_norm.len(), in_dim);
 
     let x_slice = x.as_slice().expect("x must be contiguous");
-    let norm_slice = weight_norm.as_slice().expect("weight_norm must be contiguous");
+    let norm_slice = weight_norm
+        .as_slice()
+        .expect("weight_norm must be contiguous");
 
     // Compute RMS
     let sum_sq: f32 = x_slice.iter().map(|v| v * v).sum();
@@ -54,9 +56,7 @@ pub fn fused_rmsnorm_linear(
         let row_slice = row.as_slice().expect("row must be contiguous");
         let mut sum = 0.0f32;
 
-        for (&w, (&x_val, &norm_w)) in
-            row_slice.iter().zip(x_slice.iter().zip(norm_slice.iter()))
-        {
+        for (&w, (&x_val, &norm_w)) in row_slice.iter().zip(x_slice.iter().zip(norm_slice.iter())) {
             // x_normalized[j] = x[j] * inv_rms * norm_w[j]
             let x_normalized = x_val * inv_rms * norm_w;
             sum += w * x_normalized;
@@ -85,7 +85,9 @@ pub fn fused_rmsnorm_linear_into(
     debug_assert_eq!(output.len(), out_dim);
 
     let x_slice = x.as_slice().expect("x must be contiguous");
-    let norm_slice = weight_norm.as_slice().expect("weight_norm must be contiguous");
+    let norm_slice = weight_norm
+        .as_slice()
+        .expect("weight_norm must be contiguous");
     let out_slice = output.as_slice_mut().expect("output must be contiguous");
 
     // Compute RMS
@@ -442,7 +444,7 @@ mod parallel_fused {
     use rayon::prelude::*;
 
     /// Parallel fused SwiGLU
-    /// 
+    ///
     /// Uses raw slice access to avoid borrow issues in parallel closures.
     pub fn fused_swiglu_parallel(
         x: &Array1<f32>,
@@ -475,7 +477,7 @@ mod parallel_fused {
     }
 
     /// Parallel fused MLP
-    /// 
+    ///
     /// Uses raw slice access to avoid borrow issues in parallel closures.
     pub fn fused_mlp_parallel(
         x: &Array1<f32>,
@@ -594,9 +596,8 @@ mod tests {
         let seq_len = 3;
 
         let query = array![1.0, 0.0, 0.0, 0.0];
-        let keys = Array2::from_shape_fn((seq_len, head_dim), |(i, j)| {
-            if i == j { 1.0 } else { 0.0 }
-        });
+        let keys =
+            Array2::from_shape_fn((seq_len, head_dim), |(i, j)| if i == j { 1.0 } else { 0.0 });
         let values = Array2::from_shape_fn((seq_len, head_dim), |(i, j)| (i * head_dim + j) as f32);
 
         let scale = 1.0;
@@ -648,7 +649,8 @@ mod tests {
         fn test_fused_swiglu_parallel_matches_scalar() {
             let x = Array1::from_vec((0..32).map(|i| i as f32 * 0.1).collect());
             let gate_proj = Array2::from_shape_fn((16, 32), |(i, j)| (i * 32 + j) as f32 * 0.01);
-            let up_proj = Array2::from_shape_fn((16, 32), |(i, j)| ((i * 32 + j) as f32 * 0.01) + 0.1);
+            let up_proj =
+                Array2::from_shape_fn((16, 32), |(i, j)| ((i * 32 + j) as f32 * 0.01) + 0.1);
 
             let result_scalar = fused_swiglu(&x, &gate_proj, &up_proj);
             let result_parallel = fused_swiglu_parallel(&x, &gate_proj, &up_proj);
@@ -669,8 +671,10 @@ mod tests {
 
             let x = Array1::from_vec((0..d).map(|i| i as f32 * 0.1).collect());
             let gate_proj = Array2::from_shape_fn((hidden, d), |(i, j)| (i * d + j) as f32 * 0.01);
-            let up_proj = Array2::from_shape_fn((hidden, d), |(i, j)| ((i * d + j) as f32 * 0.01) + 0.1);
-            let down_proj = Array2::from_shape_fn((d, hidden), |(i, j)| (i * hidden + j) as f32 * 0.01);
+            let up_proj =
+                Array2::from_shape_fn((hidden, d), |(i, j)| ((i * d + j) as f32 * 0.01) + 0.1);
+            let down_proj =
+                Array2::from_shape_fn((d, hidden), |(i, j)| (i * hidden + j) as f32 * 0.01);
 
             let result_scalar = fused_mlp(&x, &gate_proj, &up_proj, &down_proj);
             let result_parallel = fused_mlp_parallel(&x, &gate_proj, &up_proj, &down_proj);

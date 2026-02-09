@@ -112,7 +112,11 @@ impl OpenCLBackend {
                 if let Ok(device_list) = Device::list_all(platform) {
                     for (device_idx, device) in device_list.iter().enumerate() {
                         if let Ok(device_name) = device.name() {
-                            devices.push((platform_name.clone(), device_name, platform_idx * 100 + device_idx));
+                            devices.push((
+                                platform_name.clone(),
+                                device_name,
+                                platform_idx * 100 + device_idx,
+                            ));
                         }
                     }
                 }
@@ -145,9 +149,11 @@ impl OpenCLBackend {
         let idx = device_index.min(all_devices.len() - 1);
         let (platform, device) = &all_devices[idx];
 
-        let platform_name = platform.name()
+        let platform_name = platform
+            .name()
             .unwrap_or_else(|_| "Unknown Platform".to_string());
-        let device_name = device.name()
+        let device_name = device
+            .name()
             .unwrap_or_else(|_| "Unknown Device".to_string());
 
         // Create context and queue
@@ -243,7 +249,8 @@ impl OpenCLBackend {
 
     /// Wait for all GPU operations to complete.
     pub fn synchronize(&self) -> anyhow::Result<()> {
-        self.queue.finish()
+        self.queue
+            .finish()
             .map_err(|e| anyhow::anyhow!("Failed to synchronize OpenCL queue: {}", e))
     }
 
@@ -252,7 +259,13 @@ impl OpenCLBackend {
     // =========================================================================
 
     /// Launch RMSNorm kernel on GPU.
-    fn launch_rmsnorm(&self, x: &Buffer<f32>, weight: &Buffer<f32>, n: usize, eps: f32) -> anyhow::Result<()> {
+    fn launch_rmsnorm(
+        &self,
+        x: &Buffer<f32>,
+        weight: &Buffer<f32>,
+        n: usize,
+        eps: f32,
+    ) -> anyhow::Result<()> {
         let block_size = 256.max(n.next_power_of_two()).min(1024);
 
         let kernel = Kernel::builder()
@@ -270,7 +283,8 @@ impl OpenCLBackend {
             .map_err(|e| anyhow::anyhow!("Failed to build rmsnorm kernel: {}", e))?;
 
         unsafe {
-            kernel.enq()
+            kernel
+                .enq()
                 .map_err(|e| anyhow::anyhow!("Failed to execute rmsnorm kernel: {}", e))?;
         }
         Ok(())
@@ -293,7 +307,8 @@ impl OpenCLBackend {
             .map_err(|e| anyhow::anyhow!("Failed to build softmax kernel: {}", e))?;
 
         unsafe {
-            kernel.enq()
+            kernel
+                .enq()
                 .map_err(|e| anyhow::anyhow!("Failed to execute softmax kernel: {}", e))?;
         }
         Ok(())
@@ -317,7 +332,8 @@ impl OpenCLBackend {
             .map_err(|e| anyhow::anyhow!("Failed to build silu kernel: {}", e))?;
 
         unsafe {
-            kernel.enq()
+            kernel
+                .enq()
                 .map_err(|e| anyhow::anyhow!("Failed to execute silu kernel: {}", e))?;
         }
         Ok(())
@@ -353,7 +369,8 @@ impl OpenCLBackend {
             .map_err(|e| anyhow::anyhow!("Failed to build rope kernel: {}", e))?;
 
         unsafe {
-            kernel.enq()
+            kernel
+                .enq()
                 .map_err(|e| anyhow::anyhow!("Failed to execute rope kernel: {}", e))?;
         }
         Ok(())
@@ -388,14 +405,22 @@ impl OpenCLBackend {
             .map_err(|e| anyhow::anyhow!("Failed to build attention_scores kernel: {}", e))?;
 
         unsafe {
-            kernel.enq()
+            kernel
+                .enq()
                 .map_err(|e| anyhow::anyhow!("Failed to execute attention_scores kernel: {}", e))?;
         }
         Ok(())
     }
 
     /// Launch weighted sum kernel on GPU.
-    fn launch_weighted_sum(&self, weights: &Buffer<f32>, matrix: &Buffer<f32>, out: &Buffer<f32>, n: usize, d: usize) -> anyhow::Result<()> {
+    fn launch_weighted_sum(
+        &self,
+        weights: &Buffer<f32>,
+        matrix: &Buffer<f32>,
+        out: &Buffer<f32>,
+        n: usize,
+        d: usize,
+    ) -> anyhow::Result<()> {
         let local_size = 256;
         let global_size = ((d + local_size - 1) / local_size) * local_size;
 
@@ -414,14 +439,22 @@ impl OpenCLBackend {
             .map_err(|e| anyhow::anyhow!("Failed to build weighted_sum kernel: {}", e))?;
 
         unsafe {
-            kernel.enq()
+            kernel
+                .enq()
                 .map_err(|e| anyhow::anyhow!("Failed to execute weighted_sum kernel: {}", e))?;
         }
         Ok(())
     }
 
     /// Launch matrix-vector multiplication kernel on GPU.
-    fn launch_matmul_vec(&self, weights: &Buffer<f32>, x: &Buffer<f32>, out: &Buffer<f32>, rows: usize, cols: usize) -> anyhow::Result<()> {
+    fn launch_matmul_vec(
+        &self,
+        weights: &Buffer<f32>,
+        x: &Buffer<f32>,
+        out: &Buffer<f32>,
+        rows: usize,
+        cols: usize,
+    ) -> anyhow::Result<()> {
         let local_size = 256;
         let global_size = ((rows + local_size - 1) / local_size) * local_size;
 
@@ -440,7 +473,8 @@ impl OpenCLBackend {
             .map_err(|e| anyhow::anyhow!("Failed to build matmul_vec kernel: {}", e))?;
 
         unsafe {
-            kernel.enq()
+            kernel
+                .enq()
                 .map_err(|e| anyhow::anyhow!("Failed to execute matmul_vec kernel: {}", e))?;
         }
         Ok(())
@@ -467,13 +501,14 @@ impl KernelBackend for OpenCLBackend {
         let (rows, cols) = w.dim();
 
         // Create GPU buffers
-        let w_buffer = self.create_buffer(
-            w.as_slice().expect("Weight matrix must be contiguous"),
-        ).expect("Failed to create weight buffer");
-        let x_buffer = self.create_buffer(
-            x.as_slice().expect("Input vector must be contiguous"),
-        ).expect("Failed to create input buffer");
-        let out_buffer = self.create_buffer_zeros(rows)
+        let w_buffer = self
+            .create_buffer(w.as_slice().expect("Weight matrix must be contiguous"))
+            .expect("Failed to create weight buffer");
+        let x_buffer = self
+            .create_buffer(x.as_slice().expect("Input vector must be contiguous"))
+            .expect("Failed to create input buffer");
+        let out_buffer = self
+            .create_buffer_zeros(rows)
             .expect("Failed to create output buffer");
 
         // Launch kernel
@@ -483,7 +518,10 @@ impl KernelBackend for OpenCLBackend {
         // Synchronize and read result
         self.synchronize().expect("Failed to synchronize");
         let mut result = vec![0.0f32; rows];
-        out_buffer.read(&mut result).enq().expect("Failed to read result");
+        out_buffer
+            .read(&mut result)
+            .enq()
+            .expect("Failed to read result");
         Array1::from_vec(result)
     }
 
@@ -507,9 +545,11 @@ impl KernelBackend for OpenCLBackend {
         let n = x.len();
 
         // Create GPU buffer with data
-        let x_buffer = self.create_buffer(x.as_slice().expect("x must be contiguous"))
+        let x_buffer = self
+            .create_buffer(x.as_slice().expect("x must be contiguous"))
             .expect("Failed to create x buffer");
-        let weight_buffer = self.create_buffer(weight.as_slice().expect("weight must be contiguous"))
+        let weight_buffer = self
+            .create_buffer(weight.as_slice().expect("weight must be contiguous"))
             .expect("Failed to create weight buffer");
 
         // Launch kernel
@@ -518,7 +558,9 @@ impl KernelBackend for OpenCLBackend {
 
         // Synchronize and copy result back
         self.synchronize().expect("Failed to synchronize");
-        x_buffer.read(x.as_slice_mut().expect("x must be contiguous")).enq()
+        x_buffer
+            .read(x.as_slice_mut().expect("x must be contiguous"))
+            .enq()
             .expect("Failed to read result");
     }
 
@@ -526,7 +568,8 @@ impl KernelBackend for OpenCLBackend {
         let n = x.len();
 
         // Create GPU buffer with data
-        let x_buffer = self.create_buffer(x.as_slice().expect("x must be contiguous"))
+        let x_buffer = self
+            .create_buffer(x.as_slice().expect("x must be contiguous"))
             .expect("Failed to create x buffer");
 
         // Launch kernel
@@ -535,7 +578,9 @@ impl KernelBackend for OpenCLBackend {
 
         // Synchronize and copy result back
         self.synchronize().expect("Failed to synchronize");
-        x_buffer.read(x.as_slice_mut().expect("x must be contiguous")).enq()
+        x_buffer
+            .read(x.as_slice_mut().expect("x must be contiguous"))
+            .enq()
             .expect("Failed to read result");
     }
 
@@ -550,9 +595,11 @@ impl KernelBackend for OpenCLBackend {
         let n = x.len();
 
         // Create GPU buffers
-        let x_buffer = self.create_buffer(x.as_slice().expect("x must be contiguous"))
+        let x_buffer = self
+            .create_buffer(x.as_slice().expect("x must be contiguous"))
             .expect("Failed to create x buffer");
-        let out_buffer = self.create_buffer_zeros(n)
+        let out_buffer = self
+            .create_buffer_zeros(n)
             .expect("Failed to create output buffer");
 
         // Launch kernel
@@ -562,7 +609,10 @@ impl KernelBackend for OpenCLBackend {
         // Synchronize and read result
         self.synchronize().expect("Failed to synchronize");
         let mut result = vec![0.0f32; n];
-        out_buffer.read(&mut result).enq().expect("Failed to read result");
+        out_buffer
+            .read(&mut result)
+            .enq()
+            .expect("Failed to read result");
         Array1::from_vec(result)
     }
 
@@ -570,11 +620,14 @@ impl KernelBackend for OpenCLBackend {
         let (n_heads, head_dim) = x.dim();
 
         // Create GPU buffers
-        let x_buffer = self.create_buffer(x.as_slice().expect("x must be contiguous"))
+        let x_buffer = self
+            .create_buffer(x.as_slice().expect("x must be contiguous"))
             .expect("Failed to create x buffer");
-        let cos_buffer = self.create_buffer(cos.as_slice().expect("cos must be contiguous"))
+        let cos_buffer = self
+            .create_buffer(cos.as_slice().expect("cos must be contiguous"))
             .expect("Failed to create cos buffer");
-        let sin_buffer = self.create_buffer(sin.as_slice().expect("sin must be contiguous"))
+        let sin_buffer = self
+            .create_buffer(sin.as_slice().expect("sin must be contiguous"))
             .expect("Failed to create sin buffer");
 
         // Launch kernel
@@ -583,7 +636,9 @@ impl KernelBackend for OpenCLBackend {
 
         // Synchronize and copy result back
         self.synchronize().expect("Failed to synchronize");
-        x_buffer.read(x.as_slice_mut().expect("x must be contiguous")).enq()
+        x_buffer
+            .read(x.as_slice_mut().expect("x must be contiguous"))
+            .enq()
             .expect("Failed to read result");
     }
 
@@ -601,13 +656,14 @@ impl KernelBackend for OpenCLBackend {
         let query_owned = query.to_owned();
         let keys_owned = keys.to_owned();
 
-        let query_buffer = self.create_buffer(
-            query_owned.as_slice().expect("query must be contiguous"),
-        ).expect("Failed to create query buffer");
-        let keys_buffer = self.create_buffer(
-            keys_owned.as_slice().expect("keys must be contiguous"),
-        ).expect("Failed to create keys buffer");
-        let scores_buffer = self.create_buffer_zeros(seq_len)
+        let query_buffer = self
+            .create_buffer(query_owned.as_slice().expect("query must be contiguous"))
+            .expect("Failed to create query buffer");
+        let keys_buffer = self
+            .create_buffer(keys_owned.as_slice().expect("keys must be contiguous"))
+            .expect("Failed to create keys buffer");
+        let scores_buffer = self
+            .create_buffer_zeros(seq_len)
             .expect("Failed to create scores buffer");
 
         // Launch kernel
@@ -618,12 +674,16 @@ impl KernelBackend for OpenCLBackend {
             seq_len,
             head_dim,
             scale,
-        ).expect("Failed to launch attention_scores kernel");
+        )
+        .expect("Failed to launch attention_scores kernel");
 
         // Synchronize and copy result back
         self.synchronize().expect("Failed to synchronize");
         let mut result = vec![0.0f32; seq_len];
-        scores_buffer.read(&mut result).enq().expect("Failed to read result");
+        scores_buffer
+            .read(&mut result)
+            .enq()
+            .expect("Failed to read result");
         scores.assign(&Array1::from_vec(result));
     }
 
@@ -639,13 +699,18 @@ impl KernelBackend for OpenCLBackend {
         let weights_owned = weights.to_owned();
         let matrix_owned = matrix.to_owned();
 
-        let weights_buffer = self.create_buffer(
-            weights_owned.as_slice().expect("weights must be contiguous"),
-        ).expect("Failed to create weights buffer");
-        let matrix_buffer = self.create_buffer(
-            matrix_owned.as_slice().expect("matrix must be contiguous"),
-        ).expect("Failed to create matrix buffer");
-        let out_buffer = self.create_buffer_zeros(d)
+        let weights_buffer = self
+            .create_buffer(
+                weights_owned
+                    .as_slice()
+                    .expect("weights must be contiguous"),
+            )
+            .expect("Failed to create weights buffer");
+        let matrix_buffer = self
+            .create_buffer(matrix_owned.as_slice().expect("matrix must be contiguous"))
+            .expect("Failed to create matrix buffer");
+        let out_buffer = self
+            .create_buffer_zeros(d)
             .expect("Failed to create output buffer");
 
         // Launch kernel
@@ -655,7 +720,10 @@ impl KernelBackend for OpenCLBackend {
         // Synchronize and copy result back
         self.synchronize().expect("Failed to synchronize");
         let mut result = vec![0.0f32; d];
-        out_buffer.read(&mut result).enq().expect("Failed to read result");
+        out_buffer
+            .read(&mut result)
+            .enq()
+            .expect("Failed to read result");
         out.assign(&Array1::from_vec(result));
     }
 }
@@ -693,7 +761,11 @@ mod tests {
 
         let backend = OpenCLBackend::new().expect("Failed to create OpenCL backend");
         assert_eq!(backend.name(), "opencl");
-        println!("OpenCL device: {} ({})", backend.device_name(), backend.platform_name());
+        println!(
+            "OpenCL device: {} ({})",
+            backend.device_name(),
+            backend.platform_name()
+        );
     }
 
     #[test]

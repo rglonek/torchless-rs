@@ -166,7 +166,10 @@ fn bench_model_components(c: &mut Criterion) {
         }
 
         b.iter(|| {
-            state.logits.assign(&torchless::kernels::matmul_vec(&model.lm_head, &state.hidden_state));
+            state.logits.assign(&torchless::kernels::matmul_vec(
+                &model.lm_head,
+                &state.hidden_state,
+            ));
             black_box(state.logits[0])
         })
     });
@@ -217,27 +220,23 @@ fn bench_generation_loop(c: &mut Criterion) {
         let config_clone = config.clone();
         group.throughput(Throughput::Elements(n_tokens as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new("greedy", n_tokens),
-            &n_tokens,
-            |b, &n| {
-                let mut state = InferenceState::new(config_clone.clone());
-                let initial_token = 1u32;
+        group.bench_with_input(BenchmarkId::new("greedy", n_tokens), &n_tokens, |b, &n| {
+            let mut state = InferenceState::new(config_clone.clone());
+            let initial_token = 1u32;
 
-                b.iter(|| {
-                    state.pos = 0;
-                    state.hidden_state.fill(0.0);
+            b.iter(|| {
+                state.pos = 0;
+                state.hidden_state.fill(0.0);
 
-                    let mut token = initial_token;
-                    for _ in 0..n {
-                        model.forward(&mut state, token, false);
-                        token = torchless::sample_greedy(&state);
-                        state.pos += 1;
-                    }
-                    black_box(token)
-                })
-            },
-        );
+                let mut token = initial_token;
+                for _ in 0..n {
+                    model.forward(&mut state, token, false);
+                    token = torchless::sample_greedy(&state);
+                    state.pos += 1;
+                }
+                black_box(token)
+            })
+        });
 
         let config_clone2 = config.clone();
         group.bench_with_input(
@@ -272,10 +271,9 @@ fn bench_generation_loop(c: &mut Criterion) {
 
 #[cfg(feature = "parallel")]
 fn bench_lazy_model(c: &mut Criterion) {
-    let params = Parameters::load("tests/fixtures/test_model.bin")
-        .expect("Failed to load test model");
-    let lazy_model = LazyMistral::load(&params)
-        .expect("Failed to initialize lazy model");
+    let params =
+        Parameters::load("tests/fixtures/test_model.bin").expect("Failed to load test model");
+    let lazy_model = LazyMistral::load(&params).expect("Failed to initialize lazy model");
     let config = lazy_model.config.clone();
 
     let mut group = c.benchmark_group("lazy_model");

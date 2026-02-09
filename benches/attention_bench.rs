@@ -27,7 +27,12 @@ fn compute_attention_scores_allocating(
     let mut scores = Array1::zeros(seq_len);
 
     for i in 0..seq_len {
-        let dot: f32 = keys.row(i).iter().zip(query.iter()).map(|(k, q)| k * q).sum();
+        let dot: f32 = keys
+            .row(i)
+            .iter()
+            .zip(query.iter())
+            .map(|(k, q)| k * q)
+            .sum();
         scores[i] = dot * scale;
     }
 
@@ -43,7 +48,12 @@ fn compute_attention_scores_preallocated(
 ) {
     let seq_len = keys.nrows();
     for i in 0..seq_len {
-        let dot: f32 = keys.row(i).iter().zip(query.iter()).map(|(k, q)| k * q).sum();
+        let dot: f32 = keys
+            .row(i)
+            .iter()
+            .zip(query.iter())
+            .map(|(k, q)| k * q)
+            .sum();
         scores[i] = dot * scale;
     }
 }
@@ -55,7 +65,9 @@ fn create_attention_test_data(
 ) -> (Array1<f32>, Array2<f32>, Array2<f32>) {
     // Query vector
     let query = Array1::from_vec(
-        (0..head_dim).map(|i| (i as f32 / head_dim as f32) - 0.5).collect()
+        (0..head_dim)
+            .map(|i| (i as f32 / head_dim as f32) - 0.5)
+            .collect(),
     );
 
     // Keys and values matrices [seq_len, head_dim]
@@ -74,10 +86,10 @@ fn bench_attention_scores(c: &mut Criterion) {
 
     // Test various sequence lengths and head dimensions
     let configs = [
-        (64, 64),    // Small
-        (128, 128),  // Medium
-        (256, 128),  // Longer sequence
-        (500, 128),  // Max sequence (matches MAX_SEQ_LEN)
+        (64, 64),   // Small
+        (128, 128), // Medium
+        (256, 128), // Longer sequence
+        (500, 128), // Max sequence (matches MAX_SEQ_LEN)
     ];
 
     for (seq_len, head_dim) in configs {
@@ -91,9 +103,7 @@ fn bench_attention_scores(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("allocating", format!("seq{}_dim{}", seq_len, head_dim)),
             &(&query, &keys, scale),
-            |b, (q, k, s)| {
-                b.iter(|| black_box(compute_attention_scores_allocating(q, k, *s)))
-            },
+            |b, (q, k, s)| b.iter(|| black_box(compute_attention_scores_allocating(q, k, *s))),
         );
 
         // Pre-allocated version
@@ -151,42 +161,30 @@ fn bench_softmax(c: &mut Criterion) {
         group.throughput(Throughput::Elements(size as u64));
 
         // Allocating version
-        group.bench_with_input(
-            BenchmarkId::new("allocating", size),
-            &x,
-            |b, x| {
-                b.iter(|| black_box(softmax_allocating(x)))
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("allocating", size), &x, |b, x| {
+            b.iter(|| black_box(softmax_allocating(x)))
+        });
 
         // In-place version
-        group.bench_with_input(
-            BenchmarkId::new("inplace", size),
-            &x,
-            |b, x| {
-                let mut x_copy = x.clone();
-                b.iter(|| {
-                    x_copy.assign(x);
-                    softmax_inplace(&mut x_copy);
-                    black_box(x_copy[0])
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("inplace", size), &x, |b, x| {
+            let mut x_copy = x.clone();
+            b.iter(|| {
+                x_copy.assign(x);
+                softmax_inplace(&mut x_copy);
+                black_box(x_copy[0])
+            })
+        });
 
         // View version (simulates sliced buffer)
-        group.bench_with_input(
-            BenchmarkId::new("view_inplace", size),
-            &x,
-            |b, x| {
-                let mut x_copy = x.clone();
-                b.iter(|| {
-                    x_copy.assign(x);
-                    let mut view = x_copy.view_mut();
-                    softmax_view_inplace(&mut view);
-                    black_box(x_copy[0])
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("view_inplace", size), &x, |b, x| {
+            let mut x_copy = x.clone();
+            b.iter(|| {
+                x_copy.assign(x);
+                let mut view = x_copy.view_mut();
+                softmax_view_inplace(&mut view);
+                black_box(x_copy[0])
+            })
+        });
     }
 
     group.finish();
@@ -228,12 +226,7 @@ fn weighted_sum_preallocated(
 fn bench_weighted_sum(c: &mut Criterion) {
     let mut group = c.benchmark_group("weighted_sum");
 
-    let configs = [
-        (64, 64),
-        (128, 128),
-        (256, 128),
-        (500, 128),
-    ];
+    let configs = [(64, 64), (128, 128), (256, 128), (500, 128)];
 
     for (seq_len, head_dim) in configs {
         // Create normalized weights (like softmax output)
@@ -254,9 +247,7 @@ fn bench_weighted_sum(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("allocating", format!("seq{}_dim{}", seq_len, head_dim)),
             &(&weights, &values),
-            |b, (w, v)| {
-                b.iter(|| black_box(weighted_sum_allocating(w, v)))
-            },
+            |b, (w, v)| b.iter(|| black_box(weighted_sum_allocating(w, v))),
         );
 
         // Pre-allocated version
@@ -346,12 +337,7 @@ fn attention_head_preallocated(
 fn bench_attention_head(c: &mut Criterion) {
     let mut group = c.benchmark_group("attention_head");
 
-    let configs = [
-        (64, 64),
-        (128, 128),
-        (256, 128),
-        (500, 128),
-    ];
+    let configs = [(64, 64), (128, 128), (256, 128), (500, 128)];
 
     for (seq_len, head_dim) in configs {
         let (query, keys, values) = create_attention_test_data(seq_len, head_dim);
@@ -365,9 +351,7 @@ fn bench_attention_head(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("allocating", format!("seq{}_dim{}", seq_len, head_dim)),
             &(&query, &keys, &values, scale),
-            |b, (q, k, v, s)| {
-                b.iter(|| black_box(attention_head_allocating(q, k, v, *s)))
-            },
+            |b, (q, k, v, s)| b.iter(|| black_box(attention_head_allocating(q, k, v, *s))),
         );
 
         // Pre-allocated version
@@ -396,8 +380,8 @@ fn bench_multihead_attention(c: &mut Criterion) {
 
     // Simulate multi-head attention with different head counts
     let configs = [
-        (8, 128, 64),    // 8 heads, seq_len=128, head_dim=64
-        (32, 128, 128),  // 32 heads, seq_len=128, head_dim=128 (typical for large models)
+        (8, 128, 64),   // 8 heads, seq_len=128, head_dim=64
+        (32, 128, 128), // 32 heads, seq_len=128, head_dim=128 (typical for large models)
     ];
 
     for (n_heads, seq_len, head_dim) in configs {
@@ -407,7 +391,7 @@ fn bench_multihead_attention(c: &mut Criterion) {
                 Array1::from_vec(
                     (0..head_dim)
                         .map(|i| ((i + h * 100) as f32 / head_dim as f32) - 0.5)
-                        .collect()
+                        .collect(),
                 )
             })
             .collect();
@@ -431,11 +415,16 @@ fn bench_multihead_attention(c: &mut Criterion) {
 
         // Sequential heads, allocating
         group.bench_with_input(
-            BenchmarkId::new("sequential_allocating", format!("{}heads_seq{}_dim{}", n_heads, seq_len, head_dim)),
+            BenchmarkId::new(
+                "sequential_allocating",
+                format!("{}heads_seq{}_dim{}", n_heads, seq_len, head_dim),
+            ),
             &(&queries, &keys_values, scale),
             |b, (qs, kvs, s)| {
                 b.iter(|| {
-                    let outputs: Vec<_> = qs.iter().zip(kvs.iter())
+                    let outputs: Vec<_> = qs
+                        .iter()
+                        .zip(kvs.iter())
                         .map(|(q, (k, v))| attention_head_allocating(q, k, v, *s))
                         .collect();
                     black_box(outputs)
@@ -445,14 +434,18 @@ fn bench_multihead_attention(c: &mut Criterion) {
 
         // Sequential heads, pre-allocated
         group.bench_with_input(
-            BenchmarkId::new("sequential_preallocated", format!("{}heads_seq{}_dim{}", n_heads, seq_len, head_dim)),
+            BenchmarkId::new(
+                "sequential_preallocated",
+                format!("{}heads_seq{}_dim{}", n_heads, seq_len, head_dim),
+            ),
             &(&queries, &keys_values, scale),
             |b, (qs, kvs, s)| {
                 let mut all_buffers: Vec<AttentionBuffers> = (0..qs.len())
                     .map(|_| AttentionBuffers::new(500, head_dim))
                     .collect();
                 b.iter(|| {
-                    for ((q, (k, v)), buf) in qs.iter().zip(kvs.iter()).zip(all_buffers.iter_mut()) {
+                    for ((q, (k, v)), buf) in qs.iter().zip(kvs.iter()).zip(all_buffers.iter_mut())
+                    {
                         attention_head_preallocated(q, k, v, *s, buf);
                     }
                     black_box(all_buffers[0].output[0])
@@ -479,7 +472,11 @@ fn bench_simd_kernels(c: &mut Criterion) {
     for size in sizes {
         let data: Vec<f32> = (0..size).map(|i| (i as f32 / size as f32) - 0.5).collect();
         let x = Array1::from_vec(data);
-        let weight = Array1::from_vec((0..size).map(|i| 1.0 + (i as f32 / size as f32) * 0.1).collect());
+        let weight = Array1::from_vec(
+            (0..size)
+                .map(|i| 1.0 + (i as f32 / size as f32) * 0.1)
+                .collect(),
+        );
         let eps = 1e-5;
 
         group.throughput(Throughput::Elements(size as u64));
@@ -512,48 +509,32 @@ fn bench_simd_kernels(c: &mut Criterion) {
         );
 
         // Softmax
-        group.bench_with_input(
-            BenchmarkId::new("softmax_scalar", size),
-            &x,
-            |b, x| {
-                let mut x_copy = x.clone();
-                b.iter(|| {
-                    x_copy.assign(x);
-                    softmax(&mut x_copy);
-                    black_box(x_copy[0])
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("softmax_scalar", size), &x, |b, x| {
+            let mut x_copy = x.clone();
+            b.iter(|| {
+                x_copy.assign(x);
+                softmax(&mut x_copy);
+                black_box(x_copy[0])
+            })
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("softmax_simd", size),
-            &x,
-            |b, x| {
-                let mut x_copy = x.clone();
-                b.iter(|| {
-                    x_copy.assign(x);
-                    softmax_simd(&mut x_copy);
-                    black_box(x_copy[0])
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("softmax_simd", size), &x, |b, x| {
+            let mut x_copy = x.clone();
+            b.iter(|| {
+                x_copy.assign(x);
+                softmax_simd(&mut x_copy);
+                black_box(x_copy[0])
+            })
+        });
 
         // SiLU
-        group.bench_with_input(
-            BenchmarkId::new("silu_scalar", size),
-            &x,
-            |b, x| {
-                b.iter(|| black_box(silu(x)))
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("silu_scalar", size), &x, |b, x| {
+            b.iter(|| black_box(silu(x)))
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("silu_simd", size),
-            &x,
-            |b, x| {
-                b.iter(|| black_box(silu_simd(x)))
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("silu_simd", size), &x, |b, x| {
+            b.iter(|| black_box(silu_simd(x)))
+        });
     }
 
     group.finish();

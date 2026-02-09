@@ -70,11 +70,8 @@ impl<T> AlignedBuffer<T> {
             };
         }
 
-        let layout = Layout::from_size_align(
-            capacity * std::mem::size_of::<T>(),
-            SIMD_ALIGNMENT,
-        )
-        .expect("Invalid layout");
+        let layout = Layout::from_size_align(capacity * std::mem::size_of::<T>(), SIMD_ALIGNMENT)
+            .expect("Invalid layout");
 
         let ptr = unsafe {
             let raw_ptr = alloc(layout) as *mut T;
@@ -166,11 +163,9 @@ impl<T> AlignedBuffer<T> {
 impl<T> Drop for AlignedBuffer<T> {
     fn drop(&mut self) {
         if self.capacity > 0 {
-            let layout = Layout::from_size_align(
-                self.capacity * std::mem::size_of::<T>(),
-                SIMD_ALIGNMENT,
-            )
-            .expect("Invalid layout");
+            let layout =
+                Layout::from_size_align(self.capacity * std::mem::size_of::<T>(), SIMD_ALIGNMENT)
+                    .expect("Invalid layout");
 
             unsafe {
                 dealloc(self.ptr.as_ptr() as *mut u8, layout);
@@ -270,11 +265,8 @@ impl InferenceArena {
     pub fn alloc_aligned<T: Default + Clone>(&self, len: usize) -> &mut [T] {
         // Allocate with extra space for alignment
         let align = SIMD_ALIGNMENT;
-        let layout = std::alloc::Layout::from_size_align(
-            len * std::mem::size_of::<T>(),
-            align,
-        )
-        .expect("Invalid layout");
+        let layout = std::alloc::Layout::from_size_align(len * std::mem::size_of::<T>(), align)
+            .expect("Invalid layout");
 
         let ptr = self.bump.alloc_layout(layout);
         unsafe {
@@ -690,12 +682,7 @@ pub unsafe fn sum_squares_unchecked(x: &[f32], len: usize) -> f32 {
 /// - `x` and `weight` must have at least `len` elements
 /// - `len` must match the actual tensor dimensions
 #[inline]
-pub unsafe fn rmsnorm_unchecked(
-    x: &mut [f32],
-    weight: &[f32],
-    eps: f32,
-    len: usize,
-) {
+pub unsafe fn rmsnorm_unchecked(x: &mut [f32], weight: &[f32], eps: f32, len: usize) {
     debug_assert!(x.len() >= len);
     debug_assert!(weight.len() >= len);
 

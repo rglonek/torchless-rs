@@ -31,7 +31,11 @@ fn test_config_size() {
     println!("Config size: {} bytes", config_size);
 
     // Should be less than 1KB for basic model config
-    assert!(config_size < 1024, "Config grew unexpectedly large: {} bytes", config_size);
+    assert!(
+        config_size < 1024,
+        "Config grew unexpectedly large: {} bytes",
+        config_size
+    );
 }
 
 #[test]
@@ -43,7 +47,11 @@ fn test_inference_state_base_size() {
 
     // The base struct (without array contents) should be manageable
     // This includes pointers/metadata for all the arrays
-    assert!(state_size < 2048, "InferenceState base grew unexpectedly: {} bytes", state_size);
+    assert!(
+        state_size < 2048,
+        "InferenceState base grew unexpectedly: {} bytes",
+        state_size
+    );
 }
 
 // =============================================================================
@@ -63,23 +71,23 @@ fn estimate_inference_state_memory(config: &Config) -> usize {
     total += 3 * (head_dim / 2) * size_of::<f32>();
 
     // Projection flat buffers: q_flat, k_flat, v_flat
-    total += config.n_heads * head_dim * size_of::<f32>();        // q_flat
-    total += config.n_kv_heads * head_dim * size_of::<f32>();     // k_flat
-    total += config.n_kv_heads * head_dim * size_of::<f32>();     // v_flat
+    total += config.n_heads * head_dim * size_of::<f32>(); // q_flat
+    total += config.n_kv_heads * head_dim * size_of::<f32>(); // k_flat
+    total += config.n_kv_heads * head_dim * size_of::<f32>(); // v_flat
 
     // Shaped state arrays: q_state, k_state, v_state
-    total += config.n_heads * head_dim * size_of::<f32>();        // q_state
-    total += config.n_kv_heads * head_dim * size_of::<f32>();     // k_state
-    total += config.n_kv_heads * head_dim * size_of::<f32>();     // v_state
+    total += config.n_heads * head_dim * size_of::<f32>(); // q_state
+    total += config.n_kv_heads * head_dim * size_of::<f32>(); // k_state
+    total += config.n_kv_heads * head_dim * size_of::<f32>(); // v_state
 
     // KV cache: 2 * n_layers * n_kv_heads * max_seq_len * head_dim
     const MAX_SEQ_LEN: usize = 500;
     total += 2 * config.n_layers * config.n_kv_heads * MAX_SEQ_LEN * head_dim * size_of::<f32>();
 
     // Attention outputs: scores, context, context_flat
-    total += config.n_heads * MAX_SEQ_LEN * size_of::<f32>();     // scores
-    total += config.n_heads * head_dim * size_of::<f32>();        // context
-    total += config.hidden_size * size_of::<f32>();               // context_flat
+    total += config.n_heads * MAX_SEQ_LEN * size_of::<f32>(); // scores
+    total += config.n_heads * head_dim * size_of::<f32>(); // context
+    total += config.hidden_size * size_of::<f32>(); // context_flat
 
     // MLP intermediates: mlp_gate, mlp_up
     total += 2 * config.intermediate_size * size_of::<f32>();
@@ -96,8 +104,11 @@ fn test_inference_state_memory_estimate() {
     let config = params.config.clone();
 
     let estimated = estimate_inference_state_memory(&config);
-    println!("Estimated InferenceState memory: {} bytes ({:.2} MB)",
-             estimated, estimated as f64 / 1024.0 / 1024.0);
+    println!(
+        "Estimated InferenceState memory: {} bytes ({:.2} MB)",
+        estimated,
+        estimated as f64 / 1024.0 / 1024.0
+    );
 
     // Create the actual state and verify it's roughly as expected
     let state = InferenceState::new(config.clone());
@@ -126,15 +137,21 @@ fn test_inference_state_memory_estimate() {
     actual_elements += state.probs.len();
 
     let actual_bytes = actual_elements * size_of::<f32>();
-    println!("Actual InferenceState array memory: {} bytes ({:.2} MB)",
-             actual_bytes, actual_bytes as f64 / 1024.0 / 1024.0);
+    println!(
+        "Actual InferenceState array memory: {} bytes ({:.2} MB)",
+        actual_bytes,
+        actual_bytes as f64 / 1024.0 / 1024.0
+    );
 
     // Should be within 10% of estimate
     let diff = (actual_bytes as i64 - estimated as i64).unsigned_abs();
     let tolerance = estimated / 10;
-    assert!(diff <= tolerance as u64,
-            "Memory estimate off by more than 10%: estimated {}, actual {}",
-            estimated, actual_bytes);
+    assert!(
+        diff <= tolerance as u64,
+        "Memory estimate off by more than 10%: estimated {}, actual {}",
+        estimated,
+        actual_bytes
+    );
 }
 
 // =============================================================================
@@ -243,8 +260,11 @@ fn test_model_memory_estimate() {
     let config = params.config.clone();
 
     let eager_estimate = estimate_eager_model_memory(&config);
-    println!("Estimated eager model memory: {} bytes ({:.2} MB)",
-             eager_estimate, eager_estimate as f64 / 1024.0 / 1024.0);
+    println!(
+        "Estimated eager model memory: {} bytes ({:.2} MB)",
+        eager_estimate,
+        eager_estimate as f64 / 1024.0 / 1024.0
+    );
 
     // For the test model, this should be relatively small
     // For a real Mistral-7B model, this would be ~25GB
@@ -262,18 +282,24 @@ fn test_lazy_model_memory_savings() {
     // Lazy model only loads norms eagerly
     // Per layer: input_layernorm (hidden_size) + post_attention_layernorm (hidden_size)
     // Plus final norm (hidden_size)
-    let lazy_eager_portion =
-        config.n_layers * 2 * config.hidden_size * size_of::<f32>() +
-        config.hidden_size * size_of::<f32>();
+    let lazy_eager_portion = config.n_layers * 2 * config.hidden_size * size_of::<f32>()
+        + config.hidden_size * size_of::<f32>();
 
-    println!("Lazy model eager portion: {} bytes ({:.2} KB)",
-             lazy_eager_portion, lazy_eager_portion as f64 / 1024.0);
-    println!("Memory savings: {:.2}x reduction",
-             eager_estimate as f64 / lazy_eager_portion as f64);
+    println!(
+        "Lazy model eager portion: {} bytes ({:.2} KB)",
+        lazy_eager_portion,
+        lazy_eager_portion as f64 / 1024.0
+    );
+    println!(
+        "Memory savings: {:.2}x reduction",
+        eager_estimate as f64 / lazy_eager_portion as f64
+    );
 
     // Lazy model should use significantly less eager memory
-    assert!(lazy_eager_portion < eager_estimate / 10,
-            "Lazy model should use at least 10x less eager memory");
+    assert!(
+        lazy_eager_portion < eager_estimate / 10,
+        "Lazy model should use at least 10x less eager memory"
+    );
 
     // Actually create the lazy model to verify it works
     let _lazy_model = LazyMistral::load(&params).unwrap();
@@ -291,24 +317,34 @@ fn test_kv_cache_memory() {
     const MAX_SEQ_LEN: usize = 500;
 
     // KV cache: 2 tensors of shape [n_layers, n_kv_heads, max_seq_len, head_dim]
-    let kv_cache_size = 2 * config.n_layers * config.n_kv_heads * MAX_SEQ_LEN * head_dim * size_of::<f32>();
+    let kv_cache_size =
+        2 * config.n_layers * config.n_kv_heads * MAX_SEQ_LEN * head_dim * size_of::<f32>();
 
-    println!("KV cache size: {} bytes ({:.2} MB)",
-             kv_cache_size, kv_cache_size as f64 / 1024.0 / 1024.0);
+    println!(
+        "KV cache size: {} bytes ({:.2} MB)",
+        kv_cache_size,
+        kv_cache_size as f64 / 1024.0 / 1024.0
+    );
 
     // Create state and verify KV cache sizes
     let state = InferenceState::new(config.clone());
     let actual_k_cache = state.k_cache.len() * size_of::<f32>();
     let actual_v_cache = state.v_cache.len() * size_of::<f32>();
 
-    assert_eq!(actual_k_cache + actual_v_cache, kv_cache_size,
-               "KV cache size mismatch");
+    assert_eq!(
+        actual_k_cache + actual_v_cache,
+        kv_cache_size,
+        "KV cache size mismatch"
+    );
 
     // For a real model, print what this would be:
     // Mistral-7B: n_layers=32, n_kv_heads=8, head_dim=128
     let real_kv_cache = 2 * 32 * 8 * MAX_SEQ_LEN * 128 * size_of::<f32>();
-    println!("Real Mistral-7B KV cache (seq_len={}): {:.2} MB",
-             MAX_SEQ_LEN, real_kv_cache as f64 / 1024.0 / 1024.0);
+    println!(
+        "Real Mistral-7B KV cache (seq_len={}): {:.2} MB",
+        MAX_SEQ_LEN,
+        real_kv_cache as f64 / 1024.0 / 1024.0
+    );
 }
 
 // =============================================================================
@@ -360,22 +396,37 @@ fn test_array_contiguity() {
     let state = InferenceState::new(params.config.clone());
 
     // Verify critical arrays are contiguous (required for SIMD/BLAS)
-    assert!(state.hidden_state.as_slice().is_some(),
-            "hidden_state must be contiguous");
-    assert!(state.residual.as_slice().is_some(),
-            "residual must be contiguous");
-    assert!(state.q_flat.as_slice().is_some(),
-            "q_flat must be contiguous");
-    assert!(state.k_flat.as_slice().is_some(),
-            "k_flat must be contiguous");
-    assert!(state.v_flat.as_slice().is_some(),
-            "v_flat must be contiguous");
-    assert!(state.logits.as_slice().is_some(),
-            "logits must be contiguous");
-    assert!(state.probs.as_slice().is_some(),
-            "probs must be contiguous");
-    assert!(state.mlp_gate.as_slice().is_some(),
-            "mlp_gate must be contiguous");
-    assert!(state.mlp_up.as_slice().is_some(),
-            "mlp_up must be contiguous");
+    assert!(
+        state.hidden_state.as_slice().is_some(),
+        "hidden_state must be contiguous"
+    );
+    assert!(
+        state.residual.as_slice().is_some(),
+        "residual must be contiguous"
+    );
+    assert!(
+        state.q_flat.as_slice().is_some(),
+        "q_flat must be contiguous"
+    );
+    assert!(
+        state.k_flat.as_slice().is_some(),
+        "k_flat must be contiguous"
+    );
+    assert!(
+        state.v_flat.as_slice().is_some(),
+        "v_flat must be contiguous"
+    );
+    assert!(
+        state.logits.as_slice().is_some(),
+        "logits must be contiguous"
+    );
+    assert!(state.probs.as_slice().is_some(), "probs must be contiguous");
+    assert!(
+        state.mlp_gate.as_slice().is_some(),
+        "mlp_gate must be contiguous"
+    );
+    assert!(
+        state.mlp_up.as_slice().is_some(),
+        "mlp_up must be contiguous"
+    );
 }

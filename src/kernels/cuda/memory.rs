@@ -77,7 +77,9 @@ impl CudaMemoryPool {
         }
 
         // No suitable buffer found, allocate new one
-        let buffer = device.alloc_zeros(bucket_size).map_err(driver_error_to_anyhow)?;
+        let buffer = device
+            .alloc_zeros(bucket_size)
+            .map_err(driver_error_to_anyhow)?;
         self.total_allocated_bytes += bucket_size * std::mem::size_of::<f32>();
         self.in_use_bytes += bucket_size * std::mem::size_of::<f32>();
         self.pool_misses += 1;
@@ -89,9 +91,11 @@ impl CudaMemoryPool {
     pub fn return_buffer(&mut self, buffer: CudaSlice<f32>) {
         let len = DeviceSlice::len(&buffer);
         let bucket_size = round_up_power_of_2(len);
-        
-        self.in_use_bytes = self.in_use_bytes.saturating_sub(bucket_size * std::mem::size_of::<f32>());
-        
+
+        self.in_use_bytes = self
+            .in_use_bytes
+            .saturating_sub(bucket_size * std::mem::size_of::<f32>());
+
         self.free_buffers
             .entry(bucket_size)
             .or_default()
@@ -106,7 +110,8 @@ impl CudaMemoryPool {
 
     /// Get statistics about the pool.
     pub fn stats(&self) -> MemoryPoolStats {
-        let pool_bytes: usize = self.free_buffers
+        let pool_bytes: usize = self
+            .free_buffers
             .iter()
             .map(|(size, buffers)| size * buffers.len() * std::mem::size_of::<f32>())
             .sum();
@@ -268,7 +273,7 @@ pub fn estimate_model_memory_mb(
     n_kv_heads: usize,
 ) -> f64 {
     let head_dim = hidden_size / n_heads;
-    
+
     // Per-layer weights
     let q_proj = hidden_size * hidden_size;
     let k_proj = hidden_size * (n_kv_heads * head_dim);
@@ -278,17 +283,17 @@ pub fn estimate_model_memory_mb(
     let up_proj = hidden_size * intermediate_size;
     let down_proj = intermediate_size * hidden_size;
     let norm = hidden_size * 2; // input_norm and post_attention_norm
-    
+
     let layer_params = q_proj + k_proj + v_proj + o_proj + gate_proj + up_proj + down_proj + norm;
     let total_layer_params = layer_params * n_layers;
-    
+
     // Embedding and output
     let embedding = vocab_size * hidden_size;
     let output = vocab_size * hidden_size;
     let final_norm = hidden_size;
-    
+
     let total_params = total_layer_params + embedding + output + final_norm;
-    
+
     // Convert to MB (assuming f32)
     (total_params * std::mem::size_of::<f32>()) as f64 / 1024.0 / 1024.0
 }
@@ -331,7 +336,7 @@ mod tests {
     fn test_pinned_buffer() {
         let mut buf = PinnedBuffer::new(100);
         assert_eq!(buf.len(), 100);
-        
+
         buf.copy_from_slice(&[1.0, 2.0, 3.0]);
         assert_eq!(buf.len(), 3);
         assert_eq!(buf.as_slice()[0], 1.0);
@@ -349,14 +354,14 @@ mod tests {
     fn test_estimate_model_memory() {
         // Test with Mistral 7B-like parameters
         let memory_mb = estimate_model_memory_mb(
-            4096,   // hidden_size
-            14336,  // intermediate_size
-            32,     // n_layers
-            32000,  // vocab_size
-            32,     // n_heads
-            8,      // n_kv_heads
+            4096,  // hidden_size
+            14336, // intermediate_size
+            32,    // n_layers
+            32000, // vocab_size
+            32,    // n_heads
+            8,     // n_kv_heads
         );
-        
+
         // Should be roughly 26-28 GB for 7B params in f32
         assert!(memory_mb > 25000.0 && memory_mb < 30000.0);
     }
@@ -364,12 +369,12 @@ mod tests {
     #[test]
     fn test_estimate_kv_cache_memory() {
         let memory_mb = estimate_kv_cache_memory_mb(
-            32,    // n_layers
-            8,     // n_kv_heads
-            128,   // head_dim
-            4096,  // max_seq_len
+            32,   // n_layers
+            8,    // n_kv_heads
+            128,  // head_dim
+            4096, // max_seq_len
         );
-        
+
         // 32 * 4096 * 8 * 128 * 2 * 4 bytes = ~1 GB
         assert!(memory_mb > 900.0 && memory_mb < 1100.0);
     }
@@ -378,7 +383,7 @@ mod tests {
     fn test_memory_pool_new() {
         let pool = CudaMemoryPool::new();
         let stats = pool.stats();
-        
+
         assert_eq!(stats.total_allocated_bytes, 0);
         assert_eq!(stats.in_use_bytes, 0);
         assert_eq!(stats.pool_hits, 0);

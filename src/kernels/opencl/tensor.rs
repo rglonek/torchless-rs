@@ -124,7 +124,9 @@ impl OpenCLTensor {
     /// Read the data from GPU to a new Vec.
     pub fn to_vec(&self) -> anyhow::Result<Vec<f32>> {
         let mut data = vec![0.0f32; self.len];
-        self.buffer.read(&mut data).enq()
+        self.buffer
+            .read(&mut data)
+            .enq()
             .map_err(|e| anyhow::anyhow!("Failed to read from OpenCL buffer: {}", e))?;
         Ok(data)
     }

@@ -244,7 +244,9 @@ mod simd_tests {
     #[test]
     fn test_softmax_simd_numerical_stability() {
         // Test with large values (numerical stability)
-        let mut x_scalar = Array1::from_vec(vec![1000.0, 1001.0, 1002.0, 999.0, 998.0, 997.0, 996.0, 995.0]);
+        let mut x_scalar = Array1::from_vec(vec![
+            1000.0, 1001.0, 1002.0, 999.0, 998.0, 997.0, 996.0, 995.0,
+        ]);
         let mut x_simd = x_scalar.clone();
 
         softmax(&mut x_scalar);

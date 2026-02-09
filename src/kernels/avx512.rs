@@ -165,7 +165,7 @@ pub unsafe fn softmax_avx512(x: &mut [f32]) {
     while i + 16 <= n {
         let v = _mm512_loadu_ps(x_ptr.add(i));
         let shifted = _mm512_sub_ps(v, max_splat);
-        
+
         // Store shifted, compute exp in scalar (AVX-512 lacks native exp)
         let mut temp = [0.0f32; 16];
         _mm512_storeu_ps(temp.as_mut_ptr(), shifted);
@@ -175,7 +175,7 @@ pub unsafe fn softmax_avx512(x: &mut [f32]) {
         }
         let exp_vec = _mm512_loadu_ps(temp.as_ptr());
         _mm512_storeu_ps(x_ptr.add(i), exp_vec);
-        
+
         i += 16;
     }
 
@@ -224,7 +224,7 @@ pub unsafe fn silu_avx512(input: &[f32], output: &mut [f32]) {
     let mut i = 0;
     while i + 16 <= n {
         let x = _mm512_loadu_ps(x_ptr.add(i));
-        
+
         // SiLU = x * sigmoid(x) = x / (1 + exp(-x))
         // Compute in scalar due to lack of native exp
         let mut temp = [0.0f32; 16];
@@ -234,7 +234,7 @@ pub unsafe fn silu_avx512(input: &[f32], output: &mut [f32]) {
         }
         let result = _mm512_loadu_ps(temp.as_ptr());
         _mm512_storeu_ps(out_ptr.add(i), result);
-        
+
         i += 16;
     }
 

@@ -45,8 +45,12 @@ fn matmul_vec_into_pure(w: &Array2<f32>, x: &Array1<f32>, out: &mut Array1<f32>)
 /// Create test matrices of a given size
 fn create_test_matrices(n: usize, d: usize) -> (Array2<f32>, Array1<f32>) {
     // Use deterministic values for reproducibility
-    let w_data: Vec<f32> = (0..n * d).map(|i| ((i % 1000) as f32 - 500.0) / 1000.0).collect();
-    let x_data: Vec<f32> = (0..d).map(|i| ((i % 1000) as f32 - 500.0) / 1000.0).collect();
+    let w_data: Vec<f32> = (0..n * d)
+        .map(|i| ((i % 1000) as f32 - 500.0) / 1000.0)
+        .collect();
+    let x_data: Vec<f32> = (0..d)
+        .map(|i| ((i % 1000) as f32 - 500.0) / 1000.0)
+        .collect();
 
     let w = Array2::from_shape_vec((n, d), w_data).unwrap();
     let x = Array1::from_vec(x_data);
@@ -62,11 +66,11 @@ fn bench_matmul_sizes(c: &mut Criterion) {
     // Medium: attention projection (hidden_size x hidden_size)
     // Large: LM head (vocab_size x hidden_size)
     let sizes = [
-        (128, 128),      // Small
-        (512, 512),      // Medium-small
-        (1024, 1024),    // Medium
-        (4096, 4096),    // Large (typical hidden_size)
-        (32000, 4096),   // Very large (vocab_size x hidden_size for LM head)
+        (128, 128),    // Small
+        (512, 512),    // Medium-small
+        (1024, 1024),  // Medium
+        (4096, 4096),  // Large (typical hidden_size)
+        (32000, 4096), // Very large (vocab_size x hidden_size for LM head)
     ];
 
     for (n, d) in sizes {
@@ -78,18 +82,14 @@ fn bench_matmul_sizes(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("ndarray_dot", format!("{}x{}", n, d)),
             &(&w, &x),
-            |b, (w, x)| {
-                b.iter(|| black_box(matmul_vec_pure(w, x)))
-            },
+            |b, (w, x)| b.iter(|| black_box(matmul_vec_pure(w, x))),
         );
 
         // Manual row-by-row (baseline, never uses BLAS)
         group.bench_with_input(
             BenchmarkId::new("manual", format!("{}x{}", n, d)),
             &(&w, &x),
-            |b, (w, x)| {
-                b.iter(|| black_box(matmul_vec_manual(w, x)))
-            },
+            |b, (w, x)| b.iter(|| black_box(matmul_vec_manual(w, x))),
         );
 
         // With pre-allocated output
@@ -111,16 +111,12 @@ fn bench_matmul_sizes(c: &mut Criterion) {
 
 #[cfg(feature = "parallel")]
 fn bench_matmul_parallel(c: &mut Criterion) {
-    use torchless::kernels::matmul_vec_parallel;
     use torchless::kernels::matmul_vec_into_parallel;
+    use torchless::kernels::matmul_vec_parallel;
 
     let mut group = c.benchmark_group("matmul_parallel");
 
-    let sizes = [
-        (1024, 1024),
-        (4096, 4096),
-        (32000, 4096),
-    ];
+    let sizes = [(1024, 1024), (4096, 4096), (32000, 4096)];
 
     for (n, d) in sizes {
         let (w, x) = create_test_matrices(n, d);
@@ -131,18 +127,14 @@ fn bench_matmul_parallel(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("serial", format!("{}x{}", n, d)),
             &(&w, &x),
-            |b, (w, x)| {
-                b.iter(|| black_box(matmul_vec_pure(w, x)))
-            },
+            |b, (w, x)| b.iter(|| black_box(matmul_vec_pure(w, x))),
         );
 
         // Parallel
         group.bench_with_input(
             BenchmarkId::new("parallel", format!("{}x{}", n, d)),
             &(&w, &x),
-            |b, (w, x)| {
-                b.iter(|| black_box(matmul_vec_parallel(w, x)))
-            },
+            |b, (w, x)| b.iter(|| black_box(matmul_vec_parallel(w, x))),
         );
 
         // Parallel with pre-allocated output
@@ -180,7 +172,9 @@ fn bench_matmul_batch(c: &mut Criterion) {
         let inputs: Vec<Array1<f32>> = (0..batch)
             .map(|i| {
                 Array1::from_vec(
-                    (0..d).map(|j| ((j + i * 100) % 1000) as f32 / 1000.0).collect()
+                    (0..d)
+                        .map(|j| ((j + i * 100) % 1000) as f32 / 1000.0)
+                        .collect(),
                 )
             })
             .collect();

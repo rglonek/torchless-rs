@@ -42,21 +42,21 @@
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 
-use cudarc::cublas::{CudaBlas, Gemv, Gemm, GemvConfig, GemmConfig};
+use cudarc::cublas::{CudaBlas, Gemm, GemmConfig, Gemv, GemvConfig};
 use cudarc::driver::{CudaDevice, CudaSlice, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::compile_ptx;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut1};
 use std::sync::Arc;
 
-pub mod tensor;
 pub mod kernels;
 pub mod memory;
+pub mod tensor;
 
-pub use tensor::CudaTensor;
 pub use memory::CudaMemoryPool;
+pub use tensor::CudaTensor;
 
-use crate::tensor::{Tensor1, Tensor2};
 use crate::kernels::backend::KernelBackend;
+use crate::tensor::{Tensor1, Tensor2};
 
 // =============================================================================
 // Error Handling
@@ -193,29 +193,47 @@ impl CudaBackend {
 
     /// Transfer a 1D array from CPU to GPU.
     pub fn to_device_1d(&self, data: &Array1<f32>) -> anyhow::Result<CudaTensor> {
-        let slice = data.as_slice().ok_or_else(|| anyhow::anyhow!("Array must be contiguous"))?;
-        let gpu_data = self.device.htod_sync_copy(slice).map_err(driver_error_to_anyhow)?;
+        let slice = data
+            .as_slice()
+            .ok_or_else(|| anyhow::anyhow!("Array must be contiguous"))?;
+        let gpu_data = self
+            .device
+            .htod_sync_copy(slice)
+            .map_err(driver_error_to_anyhow)?;
         Ok(CudaTensor::new_1d(gpu_data, data.len()))
     }
 
     /// Transfer a 2D array from CPU to GPU.
     pub fn to_device_2d(&self, data: &Array2<f32>) -> anyhow::Result<CudaTensor> {
-        let slice = data.as_slice().ok_or_else(|| anyhow::anyhow!("Array must be contiguous"))?;
+        let slice = data
+            .as_slice()
+            .ok_or_else(|| anyhow::anyhow!("Array must be contiguous"))?;
         let (rows, cols) = data.dim();
-        let gpu_data = self.device.htod_sync_copy(slice).map_err(driver_error_to_anyhow)?;
+        let gpu_data = self
+            .device
+            .htod_sync_copy(slice)
+            .map_err(driver_error_to_anyhow)?;
         Ok(CudaTensor::new_2d(gpu_data, rows, cols))
     }
 
     /// Transfer data from GPU to CPU as 1D array.
     pub fn to_host_1d(&self, tensor: &CudaTensor) -> anyhow::Result<Array1<f32>> {
-        let data = self.device.dtoh_sync_copy(tensor.data()).map_err(driver_error_to_anyhow)?;
+        let data = self
+            .device
+            .dtoh_sync_copy(tensor.data())
+            .map_err(driver_error_to_anyhow)?;
         Ok(Array1::from_vec(data))
     }
 
     /// Transfer data from GPU to CPU as 2D array.
     pub fn to_host_2d(&self, tensor: &CudaTensor) -> anyhow::Result<Array2<f32>> {
-        let (rows, cols) = tensor.shape_2d().ok_or_else(|| anyhow::anyhow!("Tensor is not 2D"))?;
-        let data = self.device.dtoh_sync_copy(tensor.data()).map_err(driver_error_to_anyhow)?;
+        let (rows, cols) = tensor
+            .shape_2d()
+            .ok_or_else(|| anyhow::anyhow!("Tensor is not 2D"))?;
+        let data = self
+            .device
+            .dtoh_sync_copy(tensor.data())
+            .map_err(driver_error_to_anyhow)?;
         Array2::from_shape_vec((rows, cols), data)
             .map_err(|e| anyhow::anyhow!("Shape error: {}", e))
     }
@@ -235,7 +253,12 @@ impl CudaBackend {
     // =========================================================================
 
     /// Launch RMSNorm kernel on GPU.
-    fn launch_rmsnorm(&self, x: &mut CudaTensor, weight: &CudaTensor, eps: f32) -> anyhow::Result<()> {
+    fn launch_rmsnorm(
+        &self,
+        x: &mut CudaTensor,
+        weight: &CudaTensor,
+        eps: f32,
+    ) -> anyhow::Result<()> {
         let n = x.len();
         let block_size: u32 = 256;
         let num_blocks: u32 = 1; // RMSNorm is computed per-vector
@@ -247,10 +270,11 @@ impl CudaBackend {
         };
 
         unsafe {
-            self.kernels.rmsnorm.clone().launch(
-                cfg,
-                (x.data_mut(), weight.data(), n as i32, eps),
-            ).map_err(driver_error_to_anyhow)?;
+            self.kernels
+                .rmsnorm
+                .clone()
+                .launch(cfg, (x.data_mut(), weight.data(), n as i32, eps))
+                .map_err(driver_error_to_anyhow)?;
         }
 
         Ok(())
@@ -269,10 +293,11 @@ impl CudaBackend {
         };
 
         unsafe {
-            self.kernels.softmax.clone().launch(
-                cfg,
-                (x.data_mut(), n as i32),
-            ).map_err(driver_error_to_anyhow)?;
+            self.kernels
+                .softmax
+                .clone()
+                .launch(cfg, (x.data_mut(), n as i32))
+                .map_err(driver_error_to_anyhow)?;
         }
 
         Ok(())
@@ -291,10 +316,11 @@ impl CudaBackend {
         };
 
         unsafe {
-            self.kernels.silu.clone().launch(
-                cfg,
-                (x.data(), out.data_mut(), n as i32),
-            ).map_err(driver_error_to_anyhow)?;
+            self.kernels
+                .silu
+                .clone()
+                .launch(cfg, (x.data(), out.data_mut(), n as i32))
+                .map_err(driver_error_to_anyhow)?;
         }
 
         Ok(())
@@ -321,17 +347,21 @@ impl CudaBackend {
         };
 
         unsafe {
-            self.kernels.rope.clone().launch(
-                cfg,
-                (
-                    x.data_mut(),
-                    cos.data(),
-                    sin.data(),
-                    n_heads as i32,
-                    head_dim as i32,
-                    half as i32,
-                ),
-            ).map_err(driver_error_to_anyhow)?;
+            self.kernels
+                .rope
+                .clone()
+                .launch(
+                    cfg,
+                    (
+                        x.data_mut(),
+                        cos.data(),
+                        sin.data(),
+                        n_heads as i32,
+                        head_dim as i32,
+                        half as i32,
+                    ),
+                )
+                .map_err(driver_error_to_anyhow)?;
         }
 
         Ok(())
@@ -357,17 +387,21 @@ impl CudaBackend {
         };
 
         unsafe {
-            self.kernels.attention_scores.clone().launch(
-                cfg,
-                (
-                    query.data(),
-                    keys.data(),
-                    scores.data_mut(),
-                    seq_len as i32,
-                    head_dim as i32,
-                    scale,
-                ),
-            ).map_err(driver_error_to_anyhow)?;
+            self.kernels
+                .attention_scores
+                .clone()
+                .launch(
+                    cfg,
+                    (
+                        query.data(),
+                        keys.data(),
+                        scores.data_mut(),
+                        seq_len as i32,
+                        head_dim as i32,
+                        scale,
+                    ),
+                )
+                .map_err(driver_error_to_anyhow)?;
         }
 
         Ok(())
@@ -392,16 +426,20 @@ impl CudaBackend {
         };
 
         unsafe {
-            self.kernels.weighted_sum.clone().launch(
-                cfg,
-                (
-                    weights.data(),
-                    matrix.data(),
-                    out.data_mut(),
-                    n as i32,
-                    d as i32,
-                ),
-            ).map_err(driver_error_to_anyhow)?;
+            self.kernels
+                .weighted_sum
+                .clone()
+                .launch(
+                    cfg,
+                    (
+                        weights.data(),
+                        matrix.data(),
+                        out.data_mut(),
+                        n as i32,
+                        d as i32,
+                    ),
+                )
+                .map_err(driver_error_to_anyhow)?;
         }
 
         Ok(())
@@ -424,40 +462,47 @@ impl KernelBackend for CudaBackend {
         // Use cuBLAS GEMV for matrix-vector multiplication
         // y = alpha * A * x + beta * y
         // where A is m x n, x is n, y is m
-        
+
         let (m, n) = w.dim();
-        
+
         // Transfer to GPU
-        let w_gpu = self.to_device_2d(w).expect("Failed to transfer weights to GPU");
-        let x_gpu = self.to_device_1d(x).expect("Failed to transfer input to GPU");
-        let mut y_gpu: CudaSlice<f32> = self.device.alloc_zeros(m).expect("Failed to allocate output");
+        let w_gpu = self
+            .to_device_2d(w)
+            .expect("Failed to transfer weights to GPU");
+        let x_gpu = self
+            .to_device_1d(x)
+            .expect("Failed to transfer input to GPU");
+        let mut y_gpu: CudaSlice<f32> = self
+            .device
+            .alloc_zeros(m)
+            .expect("Failed to allocate output");
 
         // cuBLAS uses column-major, but our arrays are row-major
         // For row-major A @ x, we compute A^T @ x in column-major
         unsafe {
             use cudarc::cublas::sys::cublasOperation_t;
-            
+
             let cfg = GemvConfig {
                 trans: cublasOperation_t::CUBLAS_OP_T, // Transpose because row-major
-                m: n as i32,  // rows of A^T = cols of A
-                n: m as i32,  // cols of A^T = rows of A
+                m: n as i32,                           // rows of A^T = cols of A
+                n: m as i32,                           // cols of A^T = rows of A
                 alpha: 1.0f32,
-                lda: n as i32,  // leading dimension (columns in row-major)
-                incx: 1,         // stride of x
+                lda: n as i32, // leading dimension (columns in row-major)
+                incx: 1,       // stride of x
                 beta: 0.0f32,
-                incy: 1,         // stride of y
+                incy: 1, // stride of y
             };
-            
-            self.cublas.gemv(
-                cfg,
-                w_gpu.data(),
-                x_gpu.data(),
-                &mut y_gpu,
-            ).expect("cuBLAS GEMV failed");
+
+            self.cublas
+                .gemv(cfg, w_gpu.data(), x_gpu.data(), &mut y_gpu)
+                .expect("cuBLAS GEMV failed");
         }
 
         // Transfer back to CPU
-        let result = self.device.dtoh_sync_copy(&y_gpu).expect("Failed to transfer result to CPU");
+        let result = self
+            .device
+            .dtoh_sync_copy(&y_gpu)
+            .expect("Failed to transfer result to CPU");
         Array1::from_vec(result)
     }
 
@@ -469,7 +514,7 @@ impl KernelBackend for CudaBackend {
     fn matmul(&self, a: &Array2<f32>, b: &Array2<f32>) -> Array2<f32> {
         // Use cuBLAS GEMM for matrix-matrix multiplication
         // C = alpha * op(A) * op(B) + beta * C
-        
+
         let (m, k1) = a.dim();
         let (k2, n) = b.dim();
         assert_eq!(k1, k2, "Matrix dimensions must match for multiplication");
@@ -478,11 +523,14 @@ impl KernelBackend for CudaBackend {
         // Transfer to GPU
         let a_gpu = self.to_device_2d(a).expect("Failed to transfer A to GPU");
         let b_gpu = self.to_device_2d(b).expect("Failed to transfer B to GPU");
-        let mut c_gpu: CudaSlice<f32> = self.device.alloc_zeros(m * n).expect("Failed to allocate output");
+        let mut c_gpu: CudaSlice<f32> = self
+            .device
+            .alloc_zeros(m * n)
+            .expect("Failed to allocate output");
 
         unsafe {
             use cudarc::cublas::sys::cublasOperation_t;
-            
+
             // For row-major matrices, we need to compute appropriately
             // cuBLAS expects column-major, so we swap the order: C^T = B^T @ A^T
             // Then reading C row-major gives us A @ B
@@ -498,28 +546,32 @@ impl KernelBackend for CudaBackend {
                 beta: 0.0f32,
                 ldc: n as i32,
             };
-            
-            self.cublas.gemm(
-                cfg,
-                b_gpu.data(),
-                a_gpu.data(),
-                &mut c_gpu,
-            ).expect("cuBLAS GEMM failed");
+
+            self.cublas
+                .gemm(cfg, b_gpu.data(), a_gpu.data(), &mut c_gpu)
+                .expect("cuBLAS GEMM failed");
         }
 
         // Transfer back to CPU
-        let result = self.device.dtoh_sync_copy(&c_gpu).expect("Failed to transfer result to CPU");
+        let result = self
+            .device
+            .dtoh_sync_copy(&c_gpu)
+            .expect("Failed to transfer result to CPU");
         Array2::from_shape_vec((m, n), result).expect("Shape mismatch")
     }
 
     fn rmsnorm(&self, x: &mut Array1<f32>, weight: &Array1<f32>, eps: f32) {
         let mut x_gpu = self.to_device_1d(x).expect("Failed to transfer x to GPU");
-        let weight_gpu = self.to_device_1d(weight).expect("Failed to transfer weight to GPU");
+        let weight_gpu = self
+            .to_device_1d(weight)
+            .expect("Failed to transfer weight to GPU");
 
         self.launch_rmsnorm(&mut x_gpu, &weight_gpu, eps)
             .expect("RMSNorm kernel failed");
 
-        let result = self.to_host_1d(&x_gpu).expect("Failed to transfer result to CPU");
+        let result = self
+            .to_host_1d(&x_gpu)
+            .expect("Failed to transfer result to CPU");
         x.assign(&result);
     }
 
@@ -529,7 +581,9 @@ impl KernelBackend for CudaBackend {
         self.launch_softmax(&mut x_gpu)
             .expect("Softmax kernel failed");
 
-        let result = self.to_host_1d(&x_gpu).expect("Failed to transfer result to CPU");
+        let result = self
+            .to_host_1d(&x_gpu)
+            .expect("Failed to transfer result to CPU");
         x.assign(&result);
     }
 
@@ -543,27 +597,36 @@ impl KernelBackend for CudaBackend {
     fn silu(&self, x: &Array1<f32>) -> Array1<f32> {
         let x_gpu = self.to_device_1d(x).expect("Failed to transfer x to GPU");
         let mut out_gpu = CudaTensor::new_1d(
-            self.device.alloc_zeros(x.len()).expect("Failed to allocate output"),
+            self.device
+                .alloc_zeros(x.len())
+                .expect("Failed to allocate output"),
             x.len(),
         );
 
         self.launch_silu(&x_gpu, &mut out_gpu)
             .expect("SiLU kernel failed");
 
-        self.to_host_1d(&out_gpu).expect("Failed to transfer result to CPU")
+        self.to_host_1d(&out_gpu)
+            .expect("Failed to transfer result to CPU")
     }
 
     fn apply_rope(&self, x: &mut Array2<f32>, cos: &Array1<f32>, sin: &Array1<f32>) {
         let (n_heads, head_dim) = x.dim();
-        
+
         let mut x_gpu = self.to_device_2d(x).expect("Failed to transfer x to GPU");
-        let cos_gpu = self.to_device_1d(cos).expect("Failed to transfer cos to GPU");
-        let sin_gpu = self.to_device_1d(sin).expect("Failed to transfer sin to GPU");
+        let cos_gpu = self
+            .to_device_1d(cos)
+            .expect("Failed to transfer cos to GPU");
+        let sin_gpu = self
+            .to_device_1d(sin)
+            .expect("Failed to transfer sin to GPU");
 
         self.launch_rope(&mut x_gpu, &cos_gpu, &sin_gpu, n_heads, head_dim)
             .expect("RoPE kernel failed");
 
-        let result = self.to_host_2d(&x_gpu).expect("Failed to transfer result to CPU");
+        let result = self
+            .to_host_2d(&x_gpu)
+            .expect("Failed to transfer result to CPU");
         x.assign(&result);
     }
 
@@ -579,17 +642,32 @@ impl KernelBackend for CudaBackend {
         let seq_len = keys.nrows();
         let head_dim = keys.ncols();
 
-        let query_gpu = self.to_device_1d(&query_owned).expect("Failed to transfer query to GPU");
-        let keys_gpu = self.to_device_2d(&keys_owned).expect("Failed to transfer keys to GPU");
+        let query_gpu = self
+            .to_device_1d(&query_owned)
+            .expect("Failed to transfer query to GPU");
+        let keys_gpu = self
+            .to_device_2d(&keys_owned)
+            .expect("Failed to transfer keys to GPU");
         let mut scores_gpu = CudaTensor::new_1d(
-            self.device.alloc_zeros(seq_len).expect("Failed to allocate scores"),
+            self.device
+                .alloc_zeros(seq_len)
+                .expect("Failed to allocate scores"),
             seq_len,
         );
 
-        self.launch_attention_scores(&query_gpu, &keys_gpu, &mut scores_gpu, scale, seq_len, head_dim)
-            .expect("Attention scores kernel failed");
+        self.launch_attention_scores(
+            &query_gpu,
+            &keys_gpu,
+            &mut scores_gpu,
+            scale,
+            seq_len,
+            head_dim,
+        )
+        .expect("Attention scores kernel failed");
 
-        let result = self.to_host_1d(&scores_gpu).expect("Failed to transfer result to CPU");
+        let result = self
+            .to_host_1d(&scores_gpu)
+            .expect("Failed to transfer result to CPU");
         scores.assign(&result);
     }
 
@@ -603,17 +681,25 @@ impl KernelBackend for CudaBackend {
         let matrix_owned = matrix.to_owned();
         let (n, d) = matrix.dim();
 
-        let weights_gpu = self.to_device_1d(&weights_owned).expect("Failed to transfer weights to GPU");
-        let matrix_gpu = self.to_device_2d(&matrix_owned).expect("Failed to transfer matrix to GPU");
+        let weights_gpu = self
+            .to_device_1d(&weights_owned)
+            .expect("Failed to transfer weights to GPU");
+        let matrix_gpu = self
+            .to_device_2d(&matrix_owned)
+            .expect("Failed to transfer matrix to GPU");
         let mut out_gpu = CudaTensor::new_1d(
-            self.device.alloc_zeros(d).expect("Failed to allocate output"),
+            self.device
+                .alloc_zeros(d)
+                .expect("Failed to allocate output"),
             d,
         );
 
         self.launch_weighted_sum(&weights_gpu, &matrix_gpu, &mut out_gpu, n, d)
             .expect("Weighted sum kernel failed");
 
-        let result = self.to_host_1d(&out_gpu).expect("Failed to transfer result to CPU");
+        let result = self
+            .to_host_1d(&out_gpu)
+            .expect("Failed to transfer result to CPU");
         out.assign(&result);
     }
 }
@@ -825,35 +911,49 @@ extern "C" __global__ void elementwise_add_kernel(
 fn compile_kernels(device: &Arc<CudaDevice>) -> anyhow::Result<CudaKernels> {
     // Compile CUDA source to PTX
     let ptx = compile_ptx(CUDA_KERNELS_SOURCE).map_err(compile_error_to_anyhow)?;
-    
+
     // Load module into device
-    device.load_ptx(ptx, "torchless_kernels", &[
-        "rmsnorm_kernel",
-        "softmax_kernel", 
-        "silu_kernel",
-        "rope_kernel",
-        "attention_scores_kernel",
-        "weighted_sum_kernel",
-        "elementwise_mul_kernel",
-        "elementwise_add_kernel",
-    ]).map_err(driver_error_to_anyhow)?;
+    device
+        .load_ptx(
+            ptx,
+            "torchless_kernels",
+            &[
+                "rmsnorm_kernel",
+                "softmax_kernel",
+                "silu_kernel",
+                "rope_kernel",
+                "attention_scores_kernel",
+                "weighted_sum_kernel",
+                "elementwise_mul_kernel",
+                "elementwise_add_kernel",
+            ],
+        )
+        .map_err(driver_error_to_anyhow)?;
 
     // Get function handles
-    let rmsnorm = device.get_func("torchless_kernels", "rmsnorm_kernel")
+    let rmsnorm = device
+        .get_func("torchless_kernels", "rmsnorm_kernel")
         .ok_or_else(|| anyhow::anyhow!("Failed to get rmsnorm_kernel"))?;
-    let softmax = device.get_func("torchless_kernels", "softmax_kernel")
+    let softmax = device
+        .get_func("torchless_kernels", "softmax_kernel")
         .ok_or_else(|| anyhow::anyhow!("Failed to get softmax_kernel"))?;
-    let silu = device.get_func("torchless_kernels", "silu_kernel")
+    let silu = device
+        .get_func("torchless_kernels", "silu_kernel")
         .ok_or_else(|| anyhow::anyhow!("Failed to get silu_kernel"))?;
-    let rope = device.get_func("torchless_kernels", "rope_kernel")
+    let rope = device
+        .get_func("torchless_kernels", "rope_kernel")
         .ok_or_else(|| anyhow::anyhow!("Failed to get rope_kernel"))?;
-    let attention_scores = device.get_func("torchless_kernels", "attention_scores_kernel")
+    let attention_scores = device
+        .get_func("torchless_kernels", "attention_scores_kernel")
         .ok_or_else(|| anyhow::anyhow!("Failed to get attention_scores_kernel"))?;
-    let weighted_sum = device.get_func("torchless_kernels", "weighted_sum_kernel")
+    let weighted_sum = device
+        .get_func("torchless_kernels", "weighted_sum_kernel")
         .ok_or_else(|| anyhow::anyhow!("Failed to get weighted_sum_kernel"))?;
-    let elementwise_mul = device.get_func("torchless_kernels", "elementwise_mul_kernel")
+    let elementwise_mul = device
+        .get_func("torchless_kernels", "elementwise_mul_kernel")
         .ok_or_else(|| anyhow::anyhow!("Failed to get elementwise_mul_kernel"))?;
-    let elementwise_add = device.get_func("torchless_kernels", "elementwise_add_kernel")
+    let elementwise_add = device
+        .get_func("torchless_kernels", "elementwise_add_kernel")
         .ok_or_else(|| anyhow::anyhow!("Failed to get elementwise_add_kernel"))?;
 
     Ok(CudaKernels {

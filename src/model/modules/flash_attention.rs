@@ -99,11 +99,15 @@ impl OnlineSoftmaxState {
     #[inline]
     fn update_tile(&mut self, scores: &[f32], values: &[f32], head_dim: usize, tile_len: usize) {
         // Find max in this tile
-        let tile_max = scores.iter().take(tile_len).copied().fold(f32::NEG_INFINITY, f32::max);
-        
+        let tile_max = scores
+            .iter()
+            .take(tile_len)
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+
         // Compute new global max
         let new_max = self.max.max(tile_max);
-        
+
         // Rescale previous contributions if max changed
         if new_max > self.max && self.sum > 0.0 {
             let scale = (self.max - new_max).exp();
@@ -112,24 +116,24 @@ impl OnlineSoftmaxState {
                 *o *= scale;
             }
         }
-        
+
         // Compute exp(scores - new_max) and accumulate weighted values
         let mut tile_sum = 0.0f32;
         for i in 0..tile_len {
             let weight = (scores[i] - new_max).exp();
             tile_sum += weight;
-            
+
             // Add weighted value to output
             let value_start = i * head_dim;
             for d in 0..head_dim {
                 self.output[d] += weight * values[value_start + d];
             }
         }
-        
+
         self.sum += tile_sum;
         self.max = new_max;
     }
-    
+
     /// Finalize the softmax computation by dividing by the total sum.
     #[inline]
     fn finalize(&mut self) {
@@ -140,7 +144,7 @@ impl OnlineSoftmaxState {
             }
         }
     }
-    
+
     /// Get the final output after finalization.
     fn output(&self) -> &[f32] {
         &self.output
@@ -172,24 +176,24 @@ pub fn flash_attention_single_head(
 ) -> Vec<f32> {
     let head_dim = query.len();
     let tile_size = config.tile_size.min(seq_len);
-    
+
     // Use standard attention for short sequences
     if seq_len < config.threshold {
         return standard_attention_single_head(query, k_cache, v_cache, seq_len, scale);
     }
-    
+
     let mut state = OnlineSoftmaxState::new(head_dim);
-    
+
     // Pre-allocate tile buffers
     let mut tile_scores = vec![0.0f32; tile_size];
     let mut tile_values = vec![0.0f32; tile_size * head_dim];
-    
+
     // Process K/V cache in tiles
     let mut pos = 0;
     while pos < seq_len {
         let tile_end = (pos + tile_size).min(seq_len);
         let current_tile_size = tile_end - pos;
-        
+
         // Compute attention scores for this tile: score[i] = query · k[i] * scale
         for i in 0..current_tile_size {
             let k_row = k_cache.row(pos + i);
@@ -200,7 +204,7 @@ pub fn flash_attention_single_head(
             }
             tile_scores[i] = dot * scale;
         }
-        
+
         // Copy values for this tile
         for i in 0..current_tile_size {
             let v_row = v_cache.row(pos + i);
@@ -209,13 +213,13 @@ pub fn flash_attention_single_head(
                 tile_values[i * head_dim + d] = v_slice[d];
             }
         }
-        
+
         // Update online softmax state
         state.update_tile(&tile_scores, &tile_values, head_dim, current_tile_size);
-        
+
         pos = tile_end;
     }
-    
+
     // Finalize and return output
     state.finalize();
     state.output().to_vec()
@@ -230,7 +234,7 @@ fn standard_attention_single_head(
     scale: f32,
 ) -> Vec<f32> {
     let head_dim = query.len();
-    
+
     // Compute all attention scores
     let mut scores = vec![0.0f32; seq_len];
     for i in 0..seq_len {
@@ -242,7 +246,7 @@ fn standard_attention_single_head(
         }
         scores[i] = dot * scale;
     }
-    
+
     // Softmax
     let max_score = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     let mut sum = 0.0f32;
@@ -254,7 +258,7 @@ fn standard_attention_single_head(
     for s in scores.iter_mut() {
         *s *= inv_sum;
     }
-    
+
     // Weighted sum of values
     let mut output = vec![0.0f32; head_dim];
     for i in 0..seq_len {
@@ -265,7 +269,7 @@ fn standard_attention_single_head(
             output[d] += w * v_slice[d];
         }
     }
-    
+
     output
 }
 
@@ -286,8 +290,8 @@ fn standard_attention_single_head(
 /// Attention output [n_heads, head_dim]
 pub fn flash_attention_multi_head(
     q_state: &Array2<f32>,
-    k_cache: ArrayView2<f32>,  // Slice for one KV head: [seq_len, head_dim]
-    v_cache: ArrayView2<f32>,  // Slice for one KV head: [seq_len, head_dim]
+    k_cache: ArrayView2<f32>, // Slice for one KV head: [seq_len, head_dim]
+    v_cache: ArrayView2<f32>, // Slice for one KV head: [seq_len, head_dim]
     n_heads: usize,
     n_kv_heads: usize,
     seq_len: usize,
@@ -296,31 +300,25 @@ pub fn flash_attention_multi_head(
     let (_, head_dim) = q_state.dim();
     let scale = 1.0 / (head_dim as f32).sqrt();
     let kv_groups = n_heads / n_kv_heads;
-    
+
     let mut output = Array2::zeros((n_heads, head_dim));
-    
+
     // Process each query head
     for h in 0..n_heads {
         let _kv_head = h / kv_groups;
         let q_row = q_state.row(h);
         let q_slice = q_row.as_slice().expect("q_state row must be contiguous");
-        
+
         // Compute flash attention for this head
-        let head_output = flash_attention_single_head(
-            q_slice,
-            k_cache,
-            v_cache,
-            seq_len,
-            scale,
-            config,
-        );
-        
+        let head_output =
+            flash_attention_single_head(q_slice, k_cache, v_cache, seq_len, scale, config);
+
         // Copy to output
         for d in 0..head_dim {
             output[[h, d]] = head_output[d];
         }
     }
-    
+
     output
 }
 
@@ -339,31 +337,25 @@ pub fn flash_attention_parallel(
     config: &FlashAttentionConfig,
 ) -> Array2<f32> {
     use rayon::prelude::*;
-    
+
     let (_, head_dim) = q_state.dim();
     let scale = 1.0 / (head_dim as f32).sqrt();
     let _kv_groups = n_heads / n_kv_heads;
-    
+
     // Compute each head in parallel
     let head_outputs: Vec<(usize, Vec<f32>)> = (0..n_heads)
         .into_par_iter()
         .map(|h| {
             let q_row = q_state.row(h);
             let q_slice = q_row.as_slice().expect("q_state row must be contiguous");
-            
-            let output = flash_attention_single_head(
-                q_slice,
-                k_cache,
-                v_cache,
-                seq_len,
-                scale,
-                config,
-            );
-            
+
+            let output =
+                flash_attention_single_head(q_slice, k_cache, v_cache, seq_len, scale, config);
+
             (h, output)
         })
         .collect();
-    
+
     // Assemble output
     let mut output = Array2::zeros((n_heads, head_dim));
     for (h, head_output) in head_outputs {
@@ -371,7 +363,7 @@ pub fn flash_attention_parallel(
             output[[h, d]] = head_output[d];
         }
     }
-    
+
     output
 }
 
@@ -402,28 +394,28 @@ pub fn flash_attention_into(
 ) {
     let head_dim = query.len();
     let tile_size = config.tile_size.min(seq_len);
-    
+
     // Initialize output to zero
     for o in output.iter_mut() {
         *o = 0.0;
     }
-    
+
     // Use standard attention for short sequences
     if seq_len < config.threshold {
         standard_attention_into(query, k_cache, v_cache, output, seq_len, scale);
         return;
     }
-    
+
     // Online softmax state
     let mut max_val = f32::NEG_INFINITY;
     let mut sum = 0.0f32;
-    
+
     // Process K/V cache in tiles
     let mut pos = 0;
     while pos < seq_len {
         let tile_end = (pos + tile_size).min(seq_len);
         let current_tile_size = tile_end - pos;
-        
+
         // Compute attention scores for this tile
         for i in 0..current_tile_size {
             let k_row = k_cache.row(pos + i);
@@ -434,7 +426,7 @@ pub fn flash_attention_into(
             }
             scores_buffer[i] = dot * scale;
         }
-        
+
         // Copy values for this tile
         for i in 0..current_tile_size {
             let v_row = v_cache.row(pos + i);
@@ -443,10 +435,14 @@ pub fn flash_attention_into(
                 values_buffer[i * head_dim + d] = v_slice[d];
             }
         }
-        
+
         // Find max in this tile
-        let tile_max = scores_buffer.iter().take(current_tile_size).copied().fold(f32::NEG_INFINITY, f32::max);
-        
+        let tile_max = scores_buffer
+            .iter()
+            .take(current_tile_size)
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+
         // Update global max and rescale if needed
         let new_max = max_val.max(tile_max);
         if new_max > max_val && sum > 0.0 {
@@ -456,7 +452,7 @@ pub fn flash_attention_into(
                 *o *= scale_factor;
             }
         }
-        
+
         // Accumulate weighted values
         let mut tile_sum = 0.0f32;
         for i in 0..current_tile_size {
@@ -466,12 +462,12 @@ pub fn flash_attention_into(
                 output[d] += weight * values_buffer[i * head_dim + d];
             }
         }
-        
+
         sum += tile_sum;
         max_val = new_max;
         pos = tile_end;
     }
-    
+
     // Normalize
     if sum > 0.0 {
         let inv_sum = 1.0 / sum;
@@ -491,10 +487,10 @@ fn standard_attention_into(
     scale: f32,
 ) {
     let head_dim = query.len();
-    
+
     // Allocate scores (unavoidable for standard attention)
     let mut scores = vec![0.0f32; seq_len];
-    
+
     // Compute scores
     for i in 0..seq_len {
         let k_row = k_cache.row(i);
@@ -505,7 +501,7 @@ fn standard_attention_into(
         }
         scores[i] = dot * scale;
     }
-    
+
     // Softmax
     let max_score = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     let mut sum = 0.0f32;
@@ -517,7 +513,7 @@ fn standard_attention_into(
     for s in scores.iter_mut() {
         *s *= inv_sum;
     }
-    
+
     // Weighted sum into output
     output.fill(0.0);
     for i in 0..seq_len {
@@ -544,14 +540,19 @@ fn standard_attention_into(
 /// # Note
 /// Flash attention processes heads sequentially, reusing buffers between heads.
 /// Standard attention typically materializes all attention scores for all heads.
-pub fn estimate_memory(seq_len: usize, n_heads: usize, head_dim: usize, tile_size: usize) -> (usize, usize) {
+pub fn estimate_memory(
+    seq_len: usize,
+    n_heads: usize,
+    head_dim: usize,
+    tile_size: usize,
+) -> (usize, usize) {
     let float_size = std::mem::size_of::<f32>();
-    
+
     // Standard attention: n_heads * seq_len scores + output context
     let standard_scores = n_heads * seq_len * float_size;
     let standard_context = n_heads * head_dim * float_size;
     let standard_total = standard_scores + standard_context;
-    
+
     // Flash attention: single-head tile buffers (reused across heads)
     // Only needs buffers for one head at a time when processing sequentially
     let flash_scores = tile_size * float_size;
@@ -560,7 +561,7 @@ pub fn estimate_memory(seq_len: usize, n_heads: usize, head_dim: usize, tile_siz
     let flash_per_head = flash_scores + flash_values + flash_output;
     // Plus output context for all heads
     let flash_total = flash_per_head + (n_heads * head_dim * float_size);
-    
+
     (flash_total, standard_total)
 }
 
@@ -568,32 +569,32 @@ pub fn estimate_memory(seq_len: usize, n_heads: usize, head_dim: usize, tile_siz
 mod tests {
     use super::*;
     use ndarray::Array2;
-    
+
     fn make_test_data(seq_len: usize, head_dim: usize) -> (Vec<f32>, Array2<f32>, Array2<f32>) {
         let query: Vec<f32> = (0..head_dim).map(|i| (i as f32 * 0.1).sin()).collect();
-        
+
         let mut k_cache = Array2::zeros((seq_len, head_dim));
         let mut v_cache = Array2::zeros((seq_len, head_dim));
-        
+
         for i in 0..seq_len {
             for d in 0..head_dim {
                 k_cache[[i, d]] = ((i * head_dim + d) as f32 * 0.05).cos();
                 v_cache[[i, d]] = ((i * head_dim + d) as f32 * 0.03).sin();
             }
         }
-        
+
         (query, k_cache, v_cache)
     }
-    
+
     #[test]
     fn test_flash_attention_matches_standard() {
         let seq_len = 200;
         let head_dim = 64;
         let (query, k_cache, v_cache) = make_test_data(seq_len, head_dim);
         let scale = 1.0 / (head_dim as f32).sqrt();
-        
+
         let config = FlashAttentionConfig::default();
-        
+
         // Flash attention
         let flash_output = flash_attention_single_head(
             &query,
@@ -603,38 +604,39 @@ mod tests {
             scale,
             &config,
         );
-        
+
         // Standard attention
-        let standard_output = standard_attention_single_head(
-            &query,
-            k_cache.view(),
-            v_cache.view(),
-            seq_len,
-            scale,
-        );
-        
+        let standard_output =
+            standard_attention_single_head(&query, k_cache.view(), v_cache.view(), seq_len, scale);
+
         // Compare outputs
         for d in 0..head_dim {
             let diff = (flash_output[d] - standard_output[d]).abs();
-            assert!(diff < 1e-4, "Mismatch at dim {}: flash={}, standard={}, diff={}",
-                d, flash_output[d], standard_output[d], diff);
+            assert!(
+                diff < 1e-4,
+                "Mismatch at dim {}: flash={}, standard={}, diff={}",
+                d,
+                flash_output[d],
+                standard_output[d],
+                diff
+            );
         }
     }
-    
+
     #[test]
     fn test_flash_attention_into() {
         let seq_len = 150;
         let head_dim = 64;
         let (query, k_cache, v_cache) = make_test_data(seq_len, head_dim);
         let scale = 1.0 / (head_dim as f32).sqrt();
-        
+
         let config = FlashAttentionConfig::default();
         let tile_size = config.tile_size;
-        
+
         let mut output = vec![0.0f32; head_dim];
         let mut scores_buffer = vec![0.0f32; tile_size];
         let mut values_buffer = vec![0.0f32; tile_size * head_dim];
-        
+
         flash_attention_into(
             &query,
             k_cache.view(),
@@ -646,42 +648,43 @@ mod tests {
             &mut scores_buffer,
             &mut values_buffer,
         );
-        
+
         // Compare with standard
-        let standard = standard_attention_single_head(
-            &query,
-            k_cache.view(),
-            v_cache.view(),
-            seq_len,
-            scale,
-        );
-        
+        let standard =
+            standard_attention_single_head(&query, k_cache.view(), v_cache.view(), seq_len, scale);
+
         for d in 0..head_dim {
             let diff = (output[d] - standard[d]).abs();
-            assert!(diff < 1e-4, "Mismatch at dim {}: got={}, expected={}", d, output[d], standard[d]);
+            assert!(
+                diff < 1e-4,
+                "Mismatch at dim {}: got={}, expected={}",
+                d,
+                output[d],
+                standard[d]
+            );
         }
     }
-    
+
     #[test]
     fn test_online_softmax_state() {
         let head_dim = 4;
         let mut state = OnlineSoftmaxState::new(head_dim);
-        
+
         // First tile: scores [1, 2], values [[1,1,1,1], [2,2,2,2]]
         let scores1 = vec![1.0, 2.0];
         let values1 = vec![1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0];
         state.update_tile(&scores1, &values1, head_dim, 2);
-        
+
         // Second tile: scores [3], values [[3,3,3,3]]
         let scores2 = vec![3.0];
         let values2 = vec![3.0, 3.0, 3.0, 3.0];
         state.update_tile(&scores2, &values2, head_dim, 1);
-        
+
         state.finalize();
-        
+
         // Verify output sums to a weighted average
         let output = state.output();
-        
+
         // Manual computation
         let max_val = 3.0f32;
         let e1 = (1.0 - max_val).exp();
@@ -689,36 +692,44 @@ mod tests {
         let e3 = (3.0 - max_val).exp();
         let sum = e1 + e2 + e3;
         let expected = (e1 * 1.0 + e2 * 2.0 + e3 * 3.0) / sum;
-        
+
         for &o in output {
-            assert!((o - expected).abs() < 1e-5, "expected {}, got {}", expected, o);
+            assert!(
+                (o - expected).abs() < 1e-5,
+                "expected {}, got {}",
+                expected,
+                o
+            );
         }
     }
-    
+
     #[test]
     fn test_memory_estimate() {
         let seq_len = 1024;
         let n_heads = 32;
         let head_dim = 128;
         let tile_size = 64;
-        
+
         let (flash_bytes, standard_bytes) = estimate_memory(seq_len, n_heads, head_dim, tile_size);
-        
+
         // Flash should use less memory for long sequences
-        assert!(flash_bytes < standard_bytes,
+        assert!(
+            flash_bytes < standard_bytes,
             "Flash ({} bytes) should be less than standard ({} bytes)",
-            flash_bytes, standard_bytes);
+            flash_bytes,
+            standard_bytes
+        );
     }
-    
+
     #[test]
     fn test_short_sequence_fallback() {
         let seq_len = 50; // Below threshold
         let head_dim = 64;
         let (query, k_cache, v_cache) = make_test_data(seq_len, head_dim);
         let scale = 1.0 / (head_dim as f32).sqrt();
-        
+
         let config = FlashAttentionConfig::default();
-        
+
         // Should use standard attention
         let output = flash_attention_single_head(
             &query,
@@ -728,10 +739,10 @@ mod tests {
             scale,
             &config,
         );
-        
+
         // Should still produce correct results
         assert_eq!(output.len(), head_dim);
-        
+
         // Verify output is normalized (softmax property)
         let sum: f32 = output.iter().map(|x| x.abs()).sum();
         assert!(sum > 0.0, "Output should not be all zeros");

@@ -48,14 +48,16 @@ impl MLP {
     /// Optimized forward pass: uses parallel matmul when available
     pub fn fast_forward(&self, state: &mut InferenceState) {
         // gate = gate_proj @ hidden_state (parallel when feature enabled)
-        state
-            .mlp_gate
-            .assign(&kernels::fast_matmul_vec(&self.gate_proj, &state.hidden_state));
+        state.mlp_gate.assign(&kernels::fast_matmul_vec(
+            &self.gate_proj,
+            &state.hidden_state,
+        ));
 
         // up = up_proj @ hidden_state (parallel when feature enabled)
-        state
-            .mlp_up
-            .assign(&kernels::fast_matmul_vec(&self.up_proj, &state.hidden_state));
+        state.mlp_up.assign(&kernels::fast_matmul_vec(
+            &self.up_proj,
+            &state.hidden_state,
+        ));
 
         // Apply SiLU to gate (uses SIMD when that feature is enabled)
         let gate_activated = kernels::fast_silu(&state.mlp_gate);

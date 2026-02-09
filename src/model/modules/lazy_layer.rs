@@ -29,7 +29,13 @@ impl LazyLayer {
 
     /// Forward pass: norm -> attention -> residual -> norm -> mlp -> residual
     /// Uses lazy tensor loading for attention and MLP projections.
-    pub fn forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool, params: &Parameters) {
+    pub fn forward(
+        &self,
+        state: &mut InferenceState,
+        layer_idx: usize,
+        debug: bool,
+        params: &Parameters,
+    ) {
         if debug && layer_idx % 8 == 0 {
             eprintln!("  Layer {}/{}", layer_idx, state.config.n_layers);
         }
@@ -60,7 +66,13 @@ impl LazyLayer {
     }
 
     /// Optimized forward pass: uses SIMD and parallel kernels where available.
-    pub fn fast_forward(&self, state: &mut InferenceState, layer_idx: usize, debug: bool, params: &Parameters) {
+    pub fn fast_forward(
+        &self,
+        state: &mut InferenceState,
+        layer_idx: usize,
+        debug: bool,
+        params: &Parameters,
+    ) {
         if debug && layer_idx % 8 == 0 {
             eprintln!("  Layer {}/{}", layer_idx, state.config.n_layers);
         }

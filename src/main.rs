@@ -1,7 +1,7 @@
 use std::env;
 use torchless::{
-    generate, init_backend, print_backend_summary, BackendPreference,
-    InferenceState, Mistral, Parameters,
+    generate, init_backend, print_backend_summary, BackendPreference, InferenceState, Mistral,
+    Parameters,
 };
 
 fn print_usage(program: &str) {
@@ -18,8 +18,14 @@ fn print_usage(program: &str) {
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  {} model.bin \"Hello, world\"", program);
-    eprintln!("  {} --backend cuda model.gguf \"The capital of France is\"", program);
-    eprintln!("  {} --backend cpu --max-tokens 100 model.bin \"Once upon a time\"", program);
+    eprintln!(
+        "  {} --backend cuda model.gguf \"The capital of France is\"",
+        program
+    );
+    eprintln!(
+        "  {} --backend cpu --max-tokens 100 model.bin \"Once upon a time\"",
+        program
+    );
 }
 
 fn parse_backend(s: &str) -> Option<BackendPreference> {
@@ -73,7 +79,10 @@ fn main() -> anyhow::Result<()> {
                 match parse_backend(&args[i + 1]) {
                     Some(pref) => backend_pref = pref,
                     None => {
-                        eprintln!("Error: unknown backend '{}'. Available: auto, cpu", args[i + 1]);
+                        eprintln!(
+                            "Error: unknown backend '{}'. Available: auto, cpu",
+                            args[i + 1]
+                        );
                         #[cfg(feature = "cuda")]
                         eprint!(", cuda");
                         #[cfg(feature = "rocm")]

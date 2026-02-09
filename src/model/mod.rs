@@ -3,15 +3,17 @@ use crate::loader::{Config, Parameters};
 use anyhow::Result;
 use ndarray::{Array1, Array2, Array4};
 
-pub mod modules;
-pub mod speculative;
-pub mod batching;
 pub mod architecture;
+pub mod batching;
 pub mod models;
+pub mod modules;
 #[cfg(feature = "parallel")]
 pub mod parallel;
+pub mod speculative;
 
-pub use modules::{Attention, Embedding, Layer, LazyAttention, LazyEmbedding, LazyLayer, LazyMLP, RMSNorm, MLP};
+pub use modules::{
+    Attention, Embedding, Layer, LazyAttention, LazyEmbedding, LazyLayer, LazyMLP, RMSNorm, MLP,
+};
 
 // =============================================================================
 // Phase 8: Multi-Architecture Support
@@ -19,34 +21,34 @@ pub use modules::{Attention, Embedding, Layer, LazyAttention, LazyEmbedding, Laz
 
 // Architecture detection and configuration
 pub use architecture::{
-    ModelArchitecture, Model, TensorNamePattern, ArchitectureConfig,
-    RopeScaling, ActivationType, NormType,
-    detect_architecture, detect_architecture_from_tensors, detect_architecture_from_config,
+    detect_architecture, detect_architecture_from_config, detect_architecture_from_tensors,
+    ActivationType, ArchitectureConfig, Model, ModelArchitecture, NormType, RopeScaling,
+    TensorNamePattern,
 };
 
 // Model implementations for different architectures
 pub use models::{
-    // LLaMA (Meta)
-    LLaMA, LazyLLaMA,
-    // Phi (Microsoft)
-    Phi, LazyPhi,
-    // Gemma (Google)
-    Gemma, LazyGemma,
-    // Qwen (Alibaba)
-    Qwen, LazyQwen,
     // Dynamic model enum for runtime polymorphism
-    DynamicModel, ModelLoader,
+    DynamicModel,
+    // Gemma (Google)
+    Gemma,
+    // LLaMA (Meta)
+    LLaMA,
+    LazyGemma,
+    LazyLLaMA,
+    LazyPhi,
+    LazyQwen,
+    ModelLoader,
+    // Phi (Microsoft)
+    Phi,
+    // Qwen (Alibaba)
+    Qwen,
 };
 
 // Flash Attention exports (Phase 4 Algorithmic Optimization)
 pub use modules::{
-    FlashAttentionConfig, 
-    flash_attention_single_head, 
-    flash_attention_multi_head,
-    flash_attention_into,
-    flash_attention_estimate_memory,
-    FLASH_TILE_SIZE,
-    FLASH_ATTENTION_THRESHOLD,
+    flash_attention_estimate_memory, flash_attention_into, flash_attention_multi_head,
+    flash_attention_single_head, FlashAttentionConfig, FLASH_ATTENTION_THRESHOLD, FLASH_TILE_SIZE,
 };
 
 #[cfg(feature = "parallel")]
@@ -54,23 +56,20 @@ pub use modules::flash_attention_parallel;
 
 // Speculative Decoding exports (Phase 4 Algorithmic Optimization)
 pub use speculative::{
-    SpeculativeConfig, SpeculativeStats, SpeculativeDecoder,
-    SelfSpeculativeDecoder, LookaheadDecoder, TokenBuffer,
-    CacheState, SpeculativeModel,
+    CacheState, LookaheadDecoder, SelfSpeculativeDecoder, SpeculativeConfig, SpeculativeDecoder,
+    SpeculativeModel, SpeculativeStats, TokenBuffer,
 };
 
 // Continuous Batching exports (Phase 4 Algorithmic Optimization)
 pub use batching::{
-    BatchingConfig, BatchingStats, BatchScheduler,
-    BatchedInferenceState, BatchStepResult, ContinuousBatchingEngine,
-    KVCachePool, Sequence, SequenceId, SequenceStatus,
+    BatchScheduler, BatchStepResult, BatchedInferenceState, BatchingConfig, BatchingStats,
+    ContinuousBatchingEngine, KVCachePool, Sequence, SequenceId, SequenceStatus,
 };
 
 // Phase 6: Parallelization exports
 #[cfg(feature = "parallel")]
 pub use parallel::{
-    ParallelConfig, ParallelInferenceState,
-    ParallelAttention, ParallelMLP, ParallelLayer,
+    ParallelAttention, ParallelConfig, ParallelInferenceState, ParallelLayer, ParallelMLP,
     PipelineParallelMistral, TensorParallelMistral,
 };
 
@@ -175,7 +174,7 @@ impl InferenceState {
     }
 
     /// Push current K and V states to cache using optimized unchecked access.
-    /// 
+    ///
     /// # Safety
     /// This uses unchecked array access for performance. The caller must ensure
     /// that layer_idx, pos, and all head indices are within bounds.
@@ -195,8 +194,14 @@ impl InferenceState {
         let stride_head = cache_shape[2] * cache_shape[3];
         let stride_pos = cache_shape[3];
 
-        let k_cache_slice = self.k_cache.as_slice_mut().expect("k_cache must be contiguous");
-        let v_cache_slice = self.v_cache.as_slice_mut().expect("v_cache must be contiguous");
+        let k_cache_slice = self
+            .k_cache
+            .as_slice_mut()
+            .expect("k_cache must be contiguous");
+        let v_cache_slice = self
+            .v_cache
+            .as_slice_mut()
+            .expect("v_cache must be contiguous");
 
         unsafe {
             let base_offset = layer_idx * stride_layer + pos * stride_pos;
@@ -452,9 +457,10 @@ impl Mistral {
         self.norm.fast_forward(state);
 
         // LM head projection to get logits (parallel when feature enabled)
-        state
-            .logits
-            .assign(&kernels::fast_matmul_vec(&self.lm_head, &state.hidden_state));
+        state.logits.assign(&kernels::fast_matmul_vec(
+            &self.lm_head,
+            &state.hidden_state,
+        ));
     }
 }
 
@@ -510,7 +516,11 @@ impl<'a> LazyMistral<'a> {
         })
     }
 
-    fn create_lazy_layer(params: &Parameters, layer_idx: usize, config: &Config) -> Result<LazyLayer> {
+    fn create_lazy_layer(
+        params: &Parameters,
+        layer_idx: usize,
+        config: &Config,
+    ) -> Result<LazyLayer> {
         let prefix = format!("model.layers.{}", layer_idx);
 
         // Load norms eagerly (small tensors)

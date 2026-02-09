@@ -101,7 +101,10 @@ impl SafetensorsDtype {
     pub fn bytes_per_element(&self) -> usize {
         match self {
             SafetensorsDtype::Bool | SafetensorsDtype::U8 | SafetensorsDtype::I8 => 1,
-            SafetensorsDtype::U16 | SafetensorsDtype::I16 | SafetensorsDtype::F16 | SafetensorsDtype::BF16 => 2,
+            SafetensorsDtype::U16
+            | SafetensorsDtype::I16
+            | SafetensorsDtype::F16
+            | SafetensorsDtype::BF16 => 2,
             SafetensorsDtype::U32 | SafetensorsDtype::I32 | SafetensorsDtype::F32 => 4,
             SafetensorsDtype::U64 | SafetensorsDtype::I64 | SafetensorsDtype::F64 => 8,
         }
@@ -111,7 +114,10 @@ impl SafetensorsDtype {
     pub fn is_float(&self) -> bool {
         matches!(
             self,
-            SafetensorsDtype::F16 | SafetensorsDtype::BF16 | SafetensorsDtype::F32 | SafetensorsDtype::F64
+            SafetensorsDtype::F16
+                | SafetensorsDtype::BF16
+                | SafetensorsDtype::F32
+                | SafetensorsDtype::F64
         )
     }
 }
@@ -200,8 +206,7 @@ impl SafetensorsLoader {
 
         // Read header size (little-endian u64)
         let header_size = u64::from_le_bytes([
-            mmap[0], mmap[1], mmap[2], mmap[3],
-            mmap[4], mmap[5], mmap[6], mmap[7],
+            mmap[0], mmap[1], mmap[2], mmap[3], mmap[4], mmap[5], mmap[6], mmap[7],
         ]) as usize;
 
         let data_offset = 8 + header_size;
@@ -219,7 +224,8 @@ impl SafetensorsLoader {
         let header: Value = serde_json::from_slice(header_bytes)
             .context("Failed to parse Safetensors JSON header")?;
 
-        let header_obj = header.as_object()
+        let header_obj = header
+            .as_object()
             .context("Safetensors header must be a JSON object")?;
 
         let mut tensors = HashMap::new();
@@ -243,8 +249,9 @@ impl SafetensorsLoader {
                 let raw_info: RawTensorInfo = serde_json::from_value(value.clone())
                     .with_context(|| format!("Failed to parse tensor info for '{}'", key))?;
 
-                let dtype = SafetensorsDtype::from_str(&raw_info.dtype)
-                    .with_context(|| format!("Unknown dtype '{}' for tensor '{}'", raw_info.dtype, key))?;
+                let dtype = SafetensorsDtype::from_str(&raw_info.dtype).with_context(|| {
+                    format!("Unknown dtype '{}' for tensor '{}'", raw_info.dtype, key)
+                })?;
 
                 let info = SafetensorsTensorInfo {
                     name: key.clone(),
@@ -260,9 +267,7 @@ impl SafetensorsLoader {
         }
 
         // Sort tensor names by offset for deterministic ordering
-        tensor_names.sort_by_key(|name| {
-            tensors.get(name).map(|t| t.start_offset).unwrap_or(0)
-        });
+        tensor_names.sort_by_key(|name| tensors.get(name).map(|t| t.start_offset).unwrap_or(0));
 
         Ok(Self {
             mmap,
@@ -287,23 +292,25 @@ impl SafetensorsLoader {
         // and merge tensor info from other files
         // Note: This is a simplified implementation that requires all shards
         // to have non-overlapping tensor names
-        
+
         let mut base = Self::load(&paths[0])?;
 
         for path in &paths[1..] {
             let shard = Self::load(path)?;
-            
+
             // Merge tensor names
             for name in shard.tensor_names {
                 if !base.tensors.contains_key(&name) {
                     base.tensor_names.push(name.clone());
                 }
             }
-            
+
             // Note: In a full implementation, we would need to handle
             // different file mmaps for different shards
             // For now, we just warn that sharded loading is limited
-            eprintln!("Warning: Sharded Safetensors loading is limited. Consider using a merged model.");
+            eprintln!(
+                "Warning: Sharded Safetensors loading is limited. Consider using a merged model."
+            );
         }
 
         Ok(base)
@@ -326,7 +333,9 @@ impl SafetensorsLoader {
 
     /// Get raw tensor bytes
     pub fn get_tensor_bytes(&self, name: &str) -> Result<&[u8]> {
-        let info = self.tensors.get(name)
+        let info = self
+            .tensors
+            .get(name)
             .context(format!("Tensor not found: {}", name))?;
 
         let start = self.data_offset + info.start_offset;
@@ -347,7 +356,9 @@ impl SafetensorsLoader {
 
     /// Get tensor as f32 vector
     pub fn get_tensor_f32(&self, name: &str) -> Result<Vec<f32>> {
-        let info = self.tensors.get(name)
+        let info = self
+            .tensors
+            .get(name)
             .context(format!("Tensor not found: {}", name))?;
         let bytes = self.get_tensor_bytes(name)?;
         let numel = info.numel();
@@ -380,8 +391,8 @@ impl SafetensorsLoader {
                 let mut result = Vec::with_capacity(numel);
                 for chunk in bytes.chunks_exact(8) {
                     let val = f64::from_le_bytes([
-                        chunk[0], chunk[1], chunk[2], chunk[3],
-                        chunk[4], chunk[5], chunk[6], chunk[7],
+                        chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6],
+                        chunk[7],
                     ]);
                     result.push(val as f32);
                 }
@@ -437,8 +448,8 @@ impl SafetensorsLoader {
                 let mut result = Vec::with_capacity(numel);
                 for chunk in bytes.chunks_exact(8) {
                     let val = i64::from_le_bytes([
-                        chunk[0], chunk[1], chunk[2], chunk[3],
-                        chunk[4], chunk[5], chunk[6], chunk[7],
+                        chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6],
+                        chunk[7],
                     ]);
                     result.push(val as f32);
                 }
@@ -448,8 +459,8 @@ impl SafetensorsLoader {
                 let mut result = Vec::with_capacity(numel);
                 for chunk in bytes.chunks_exact(8) {
                     let val = u64::from_le_bytes([
-                        chunk[0], chunk[1], chunk[2], chunk[3],
-                        chunk[4], chunk[5], chunk[6], chunk[7],
+                        chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6],
+                        chunk[7],
                     ]);
                     result.push(val as f32);
                 }
@@ -488,21 +499,26 @@ impl SafetensorsLoader {
         for name in &self.tensor_names {
             if let Some(info) = self.tensors.get(name) {
                 let name_lower = name.to_lowercase();
-                
+
                 // Embedding tensor (usually [vocab_size, hidden_size])
-                if (name_lower.contains("embed") || name_lower.contains("wte")) && info.shape.len() == 2 {
+                if (name_lower.contains("embed") || name_lower.contains("wte"))
+                    && info.shape.len() == 2
+                {
                     config.vocab_size = Some(info.shape[0]);
                     config.hidden_size = Some(info.shape[1]);
                 }
-                
+
                 // MLP tensors can reveal intermediate size
-                if (name_lower.contains("mlp") || name_lower.contains("ffn")) && 
-                   (name_lower.contains("up") || name_lower.contains("gate") || name_lower.contains("fc1")) &&
-                   info.shape.len() == 2 {
+                if (name_lower.contains("mlp") || name_lower.contains("ffn"))
+                    && (name_lower.contains("up")
+                        || name_lower.contains("gate")
+                        || name_lower.contains("fc1"))
+                    && info.shape.len() == 2
+                {
                     // For up/gate projection: [intermediate_size, hidden_size]
                     config.intermediate_size = Some(info.shape[0]);
                 }
-                
+
                 // Count layers from tensor names
                 if name_lower.contains("layer") || name_lower.contains("block") {
                     // Try to extract layer number
@@ -517,7 +533,9 @@ impl SafetensorsLoader {
                 }
 
                 // Attention heads from q_proj shape
-                if (name_lower.contains("q_proj") || name_lower.contains("query")) && info.shape.len() == 2 {
+                if (name_lower.contains("q_proj") || name_lower.contains("query"))
+                    && info.shape.len() == 2
+                {
                     if let Some(hidden) = config.hidden_size {
                         // Assuming head_dim = 64 or 128 (common values)
                         let q_size = info.shape[0];
@@ -527,7 +545,7 @@ impl SafetensorsLoader {
                                 break;
                             }
                         }
-                        
+
                         // Check for GQA by comparing k_proj size
                         if config.n_heads.is_some() && hidden > 0 {
                             // Will be filled in by k_proj check below
@@ -536,13 +554,20 @@ impl SafetensorsLoader {
                 }
 
                 // KV heads from k_proj shape (for GQA detection)
-                if (name_lower.contains("k_proj") || name_lower.contains("key")) && 
-                   !name_lower.contains("kv") && info.shape.len() == 2 {
+                if (name_lower.contains("k_proj") || name_lower.contains("key"))
+                    && !name_lower.contains("kv")
+                    && info.shape.len() == 2
+                {
                     if let Some(n_heads) = config.n_heads {
                         let k_size = info.shape[0];
-                        if let Some(q_tensor) = self.tensor_names.iter()
-                            .find(|n| n.to_lowercase().contains("q_proj") || n.to_lowercase().contains("query"))
-                            .and_then(|n| self.tensors.get(n)) 
+                        if let Some(q_tensor) = self
+                            .tensor_names
+                            .iter()
+                            .find(|n| {
+                                n.to_lowercase().contains("q_proj")
+                                    || n.to_lowercase().contains("query")
+                            })
+                            .and_then(|n| self.tensors.get(n))
                         {
                             let q_size = q_tensor.shape[0];
                             if k_size < q_size {
@@ -592,7 +617,10 @@ impl SafetensorsLoader {
         println!("File size: {} MB", self.file_size() / (1024 * 1024));
         println!("Header size: {} bytes", self.data_offset - 8);
         println!("Tensor count: {}", self.tensors.len());
-        println!("Tensor data size: {} MB", self.tensor_data_size() / (1024 * 1024));
+        println!(
+            "Tensor data size: {} MB",
+            self.tensor_data_size() / (1024 * 1024)
+        );
         println!();
 
         if !self.metadata.is_empty() {
@@ -643,12 +671,15 @@ impl SafetensorsLoader {
 ///
 /// This loads both the model weights and the config.json file (if present)
 /// from the same directory.
-pub fn load_with_config<P: AsRef<Path>>(model_path: P) -> Result<(SafetensorsLoader, Option<Value>)> {
+pub fn load_with_config<P: AsRef<Path>>(
+    model_path: P,
+) -> Result<(SafetensorsLoader, Option<Value>)> {
     let model_path = model_path.as_ref();
     let loader = SafetensorsLoader::load(model_path)?;
 
     // Try to load config.json from the same directory
-    let config_path = model_path.parent()
+    let config_path = model_path
+        .parent()
         .map(|p| p.join("config.json"))
         .filter(|p| p.exists());
 
@@ -759,9 +790,18 @@ mod tests {
 
     #[test]
     fn test_dtype_from_str() {
-        assert_eq!(SafetensorsDtype::from_str("F32"), Some(SafetensorsDtype::F32));
-        assert_eq!(SafetensorsDtype::from_str("f16"), Some(SafetensorsDtype::F16));
-        assert_eq!(SafetensorsDtype::from_str("BF16"), Some(SafetensorsDtype::BF16));
+        assert_eq!(
+            SafetensorsDtype::from_str("F32"),
+            Some(SafetensorsDtype::F32)
+        );
+        assert_eq!(
+            SafetensorsDtype::from_str("f16"),
+            Some(SafetensorsDtype::F16)
+        );
+        assert_eq!(
+            SafetensorsDtype::from_str("BF16"),
+            Some(SafetensorsDtype::BF16)
+        );
         assert_eq!(SafetensorsDtype::from_str("I8"), Some(SafetensorsDtype::I8));
         assert_eq!(SafetensorsDtype::from_str("invalid"), None);
     }

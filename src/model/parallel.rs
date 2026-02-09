@@ -22,20 +22,18 @@
 use crate::kernels;
 use crate::loader::{Config, Parameters};
 use anyhow::Result;
-use ndarray::{Array1, Array2, s};
+use ndarray::{s, Array1, Array2};
 
 #[cfg(feature = "parallel")]
 use crate::kernels::parallel::{
-    WorkDistributionConfig, TensorParallelConfig,
-    PipelineState, PipelineConfig,
-    matmul_vec_adaptive_into,
-    mlp_tensor_parallel,
+    matmul_vec_adaptive_into, mlp_tensor_parallel, PipelineConfig, PipelineState,
+    TensorParallelConfig, WorkDistributionConfig,
 };
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::modules::{RMSNorm, Embedding};
+use super::modules::{Embedding, RMSNorm};
 use super::InferenceState;
 
 // =============================================================================
@@ -88,7 +86,7 @@ impl ParallelConfig {
             ..Default::default()
         }
     }
-    
+
     /// Create a configuration for tensor parallelism
     #[cfg(feature = "parallel")]
     pub fn tensor_parallel(world_size: usize, rank: usize) -> Self {
@@ -97,15 +95,12 @@ impl ParallelConfig {
             ..Default::default()
         }
     }
-    
+
     /// Create a configuration optimized for a specific model size
     #[cfg(feature = "parallel")]
     pub fn for_model(config: &Config) -> Self {
-        let work_dist = WorkDistributionConfig::for_matmul(
-            config.hidden_size,
-            config.hidden_size,
-        );
-        
+        let work_dist = WorkDistributionConfig::for_matmul(config.hidden_size, config.hidden_size);
+
         Self {
             work_distribution: work_dist,
             adaptive_matmul: true,
@@ -114,7 +109,7 @@ impl ParallelConfig {
             ..Default::default()
         }
     }
-    
+
     #[cfg(not(feature = "parallel"))]
     pub fn for_model(_config: &Config) -> Self {
         Self::default()
@@ -149,25 +144,25 @@ impl ParallelInferenceState {
             .as_ref()
             .map(|p| p.num_micro_batches)
             .unwrap_or(1);
-        
+
         let micro_batch_buffers = (0..num_micro_batches)
             .map(|_| Array1::zeros(config.hidden_size))
             .collect();
-        
+
         #[cfg(feature = "parallel")]
         let world_size = parallel_config
             .tensor_parallel
             .as_ref()
             .map(|t| t.world_size)
             .unwrap_or(1);
-        
+
         #[cfg(not(feature = "parallel"))]
         let world_size = 1;
-        
+
         let partial_results = (0..world_size)
             .map(|_| Array1::zeros(config.hidden_size))
             .collect();
-        
+
         Self {
             inner: InferenceState::new(config),
             micro_batch_buffers,
@@ -176,7 +171,7 @@ impl ParallelInferenceState {
             work_config: parallel_config.work_distribution.clone(),
         }
     }
-    
+
     /// Get the underlying inference state
     #[inline]
     pub fn as_inference_state(&mut self) -> &mut InferenceState {
@@ -213,10 +208,10 @@ impl ParallelAttention {
             o_proj,
         }
     }
-    
+
     /// Forward pass with adaptive parallel work distribution
     #[cfg(feature = "parallel")]
-    #[allow(clippy::needless_range_loop)]  // Index-based access required for ndarray cache
+    #[allow(clippy::needless_range_loop)] // Index-based access required for ndarray cache
     pub fn forward_adaptive(
         &self,
         state: &mut InferenceState,
@@ -230,9 +225,24 @@ impl ParallelAttention {
         let seq_len = state.pos + 1;
 
         // Adaptive parallel projections
-        matmul_vec_adaptive_into(&self.q_proj, &state.hidden_state, &mut state.q_flat, work_config);
-        matmul_vec_adaptive_into(&self.k_proj, &state.hidden_state, &mut state.k_flat, work_config);
-        matmul_vec_adaptive_into(&self.v_proj, &state.hidden_state, &mut state.v_flat, work_config);
+        matmul_vec_adaptive_into(
+            &self.q_proj,
+            &state.hidden_state,
+            &mut state.q_flat,
+            work_config,
+        );
+        matmul_vec_adaptive_into(
+            &self.k_proj,
+            &state.hidden_state,
+            &mut state.k_flat,
+            work_config,
+        );
+        matmul_vec_adaptive_into(
+            &self.v_proj,
+            &state.hidden_state,
+            &mut state.v_flat,
+            work_config,
+        );
 
         // Copy flat buffers into shaped state arrays
         for h in 0..n_heads {
@@ -259,7 +269,7 @@ impl ParallelAttention {
 
         // Parallel attention with adaptive chunking
         let attn_config = WorkDistributionConfig::for_attention(n_heads, seq_len);
-        
+
         // Collect attention results in parallel
         let head_results: Vec<(usize, Vec<f32>)> = (0..n_heads)
             .into_par_iter()
@@ -320,19 +330,20 @@ impl ParallelAttention {
         }
 
         // Output projection
-        matmul_vec_adaptive_into(&self.o_proj, &state.context_flat, &mut state.hidden_state, work_config);
+        matmul_vec_adaptive_into(
+            &self.o_proj,
+            &state.context_flat,
+            &mut state.hidden_state,
+            work_config,
+        );
     }
-    
+
     #[cfg(not(feature = "parallel"))]
-    pub fn forward_adaptive(
-        &self,
-        state: &mut InferenceState,
-        _work_config: &(),
-    ) {
+    pub fn forward_adaptive(&self, state: &mut InferenceState, _work_config: &()) {
         // Fall back to standard forward
         self.forward(state);
     }
-    
+
     /// Standard forward pass (non-parallel)
     pub fn forward(&self, state: &mut InferenceState) {
         let head_dim = state.config.hidden_size / state.config.n_heads;
@@ -371,7 +382,9 @@ impl ParallelAttention {
             let seq_len = state.pos + 1;
 
             let q_head = state.q_state.row(h);
-            let k_cache_view = state.k_cache.slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
+            let k_cache_view = state
+                .k_cache
+                .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
 
             {
                 let mut scores_slice = state.scores.slice_mut(s![h, ..seq_len]);
@@ -379,7 +392,9 @@ impl ParallelAttention {
                 kernels::softmax_view(&mut scores_slice);
             }
 
-            let v_cache_view = state.v_cache.slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
+            let v_cache_view = state
+                .v_cache
+                .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
             let scores_view = state.scores.slice(s![h, ..seq_len]);
             let mut context_row = state.context.slice_mut(s![h, ..]);
             kernels::weighted_sum_rows(scores_view, v_cache_view, &mut context_row);
@@ -414,7 +429,7 @@ impl ParallelMLP {
             down_proj,
         }
     }
-    
+
     /// Forward pass with adaptive parallel work distribution
     #[cfg(feature = "parallel")]
     pub fn forward_adaptive(
@@ -423,13 +438,26 @@ impl ParallelMLP {
         work_config: &WorkDistributionConfig,
     ) {
         // Use adaptive matmul for projections
-        matmul_vec_adaptive_into(&self.gate_proj, &state.hidden_state, &mut state.mlp_gate, work_config);
-        matmul_vec_adaptive_into(&self.up_proj, &state.hidden_state, &mut state.mlp_up, work_config);
+        matmul_vec_adaptive_into(
+            &self.gate_proj,
+            &state.hidden_state,
+            &mut state.mlp_gate,
+            work_config,
+        );
+        matmul_vec_adaptive_into(
+            &self.up_proj,
+            &state.hidden_state,
+            &mut state.mlp_up,
+            work_config,
+        );
 
         // Parallel fused SiLU and multiply
-        let gate_slice = state.mlp_gate.as_slice().expect("mlp_gate must be contiguous");
+        let gate_slice = state
+            .mlp_gate
+            .as_slice()
+            .expect("mlp_gate must be contiguous");
         let up_slice = state.mlp_up.as_slice().expect("mlp_up must be contiguous");
-        
+
         let activated: Vec<f32> = gate_slice
             .par_iter()
             .zip(up_slice.par_iter())
@@ -438,13 +466,18 @@ impl ParallelMLP {
                 silu_g * u
             })
             .collect();
-        
+
         state.mlp_gate.assign(&Array1::from_vec(activated));
 
         // Output projection
-        matmul_vec_adaptive_into(&self.down_proj, &state.mlp_gate, &mut state.hidden_state, work_config);
+        matmul_vec_adaptive_into(
+            &self.down_proj,
+            &state.mlp_gate,
+            &mut state.hidden_state,
+            work_config,
+        );
     }
-    
+
     /// Forward pass with tensor parallelism
     #[cfg(feature = "parallel")]
     pub fn forward_tensor_parallel(
@@ -461,18 +494,24 @@ impl ParallelMLP {
         );
         state.hidden_state.assign(&output);
     }
-    
+
     /// Standard forward pass
     pub fn forward(&self, state: &mut InferenceState) {
-        state.mlp_gate.assign(&kernels::matmul_vec(&self.gate_proj, &state.hidden_state));
-        state.mlp_up.assign(&kernels::matmul_vec(&self.up_proj, &state.hidden_state));
+        state
+            .mlp_gate
+            .assign(&kernels::matmul_vec(&self.gate_proj, &state.hidden_state));
+        state
+            .mlp_up
+            .assign(&kernels::matmul_vec(&self.up_proj, &state.hidden_state));
 
         let gate_activated = kernels::silu(&state.mlp_gate);
         for i in 0..state.mlp_gate.len() {
             state.mlp_gate[i] = gate_activated[i] * state.mlp_up[i];
         }
 
-        state.hidden_state.assign(&kernels::matmul_vec(&self.down_proj, &state.mlp_gate));
+        state
+            .hidden_state
+            .assign(&kernels::matmul_vec(&self.down_proj, &state.mlp_gate));
     }
 }
 
@@ -576,7 +615,7 @@ pub struct PipelineParallelMistral {
     pub tokenizer: crate::tokenizer::Tokenizer,
     /// Pipeline state for managing micro-batch execution
     #[cfg(feature = "parallel")]
-    #[allow(dead_code)]  // Used for future pipeline execution methods
+    #[allow(dead_code)] // Used for future pipeline execution methods
     pipeline_state: PipelineState,
 }
 
@@ -589,7 +628,9 @@ impl PipelineParallelMistral {
         // Load embedding
         eprintln!("Loading embedding table...");
         let embed_data = params.get_tensor("model.embed_tokens.weight")?;
-        let embed_shape = params.get_tensor_shape("model.embed_tokens.weight").unwrap();
+        let embed_shape = params
+            .get_tensor_shape("model.embed_tokens.weight")
+            .unwrap();
         let embedding = Embedding::new(Array2::from_shape_vec(
             (embed_shape[0], embed_shape[1]),
             embed_data,
@@ -710,7 +751,9 @@ impl PipelineParallelMistral {
         }
 
         self.norm.forward(state);
-        state.logits.assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
+        state
+            .logits
+            .assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
     }
 
     /// Fast forward - uses parallel version when available
@@ -752,12 +795,15 @@ impl TensorParallelMistral {
     pub fn load(params: Parameters, tp_config: TensorParallelConfig) -> Result<Self> {
         let config = params.config.clone();
         let tokenizer = params.tokenizer.clone();
-        let work_config = WorkDistributionConfig::for_matmul(config.hidden_size, config.hidden_size);
+        let work_config =
+            WorkDistributionConfig::for_matmul(config.hidden_size, config.hidden_size);
 
         // Load embedding (replicated across all ranks)
         eprintln!("Loading embedding table (rank {})...", tp_config.rank);
         let embed_data = params.get_tensor("model.embed_tokens.weight")?;
-        let embed_shape = params.get_tensor_shape("model.embed_tokens.weight").unwrap();
+        let embed_shape = params
+            .get_tensor_shape("model.embed_tokens.weight")
+            .unwrap();
         let embedding = Embedding::new(Array2::from_shape_vec(
             (embed_shape[0], embed_shape[1]),
             embed_data,
@@ -773,7 +819,10 @@ impl TensorParallelMistral {
         let lm_head = Array2::from_shape_vec((lm_head_shape[0], lm_head_shape[1]), lm_head_data)?;
 
         // Load layers (attention is tensor-parallel, MLP is tensor-parallel)
-        eprintln!("Loading {} layers (tensor-parallel, rank {})...", config.n_layers, tp_config.rank);
+        eprintln!(
+            "Loading {} layers (tensor-parallel, rank {})...",
+            config.n_layers, tp_config.rank
+        );
         let mut layers = Vec::new();
         for i in 0..config.n_layers {
             if i % 4 == 0 {
@@ -804,7 +853,12 @@ impl TensorParallelMistral {
         }
 
         self.norm.fast_forward(state);
-        matmul_vec_adaptive_into(&self.lm_head, &state.hidden_state, &mut state.logits, &self.work_config);
+        matmul_vec_adaptive_into(
+            &self.lm_head,
+            &state.hidden_state,
+            &mut state.logits,
+            &self.work_config,
+        );
     }
 }
 
@@ -845,7 +899,7 @@ mod tests {
         let gate = Array2::zeros((8, 4));
         let up = Array2::zeros((8, 4));
         let down = Array2::zeros((4, 8));
-        
+
         let mlp = ParallelMLP::new(gate, up, down);
         assert_eq!(mlp.gate_proj.dim(), (8, 4));
         assert_eq!(mlp.down_proj.dim(), (4, 8));
@@ -857,7 +911,7 @@ mod tests {
         let k = Array2::zeros((4, 4));
         let v = Array2::zeros((4, 4));
         let o = Array2::zeros((4, 16));
-        
+
         let attn = ParallelAttention::new(0, q, k, v, o);
         assert_eq!(attn.layer_idx, 0);
         assert_eq!(attn.q_proj.dim(), (16, 4));

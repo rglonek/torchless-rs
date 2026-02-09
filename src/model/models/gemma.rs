@@ -25,9 +25,11 @@
 
 use crate::kernels;
 use crate::loader::{Config, Parameters};
-use crate::model::{InferenceState, Embedding, Attention};
-use crate::model::{LazyEmbedding, LazyAttention, LazyMLP};
-use crate::model::architecture::{Model, ModelArchitecture, TensorNamePattern, ArchitectureConfig, ActivationType};
+use crate::model::architecture::{
+    ActivationType, ArchitectureConfig, Model, ModelArchitecture, TensorNamePattern,
+};
+use crate::model::{Attention, Embedding, InferenceState};
+use crate::model::{LazyAttention, LazyEmbedding, LazyMLP};
 use anyhow::Result;
 use ndarray::{Array1, Array2};
 
@@ -103,7 +105,9 @@ impl GemmaMLP {
         }
 
         // down_proj @ intermediate
-        state.hidden_state.assign(&kernels::matmul_vec(&self.down_proj, &intermediate));
+        state
+            .hidden_state
+            .assign(&kernels::matmul_vec(&self.down_proj, &intermediate));
     }
 
     /// Optimized forward pass
@@ -121,7 +125,9 @@ impl GemmaMLP {
         }
 
         // down_proj @ intermediate (parallel when available)
-        state.hidden_state.assign(&kernels::fast_matmul_vec(&self.down_proj, &intermediate));
+        state
+            .hidden_state
+            .assign(&kernels::fast_matmul_vec(&self.down_proj, &intermediate));
     }
 }
 
@@ -235,10 +241,8 @@ impl Gemma {
         eprintln!("Loading Gemma embedding table...");
         let embed_data = params.get_tensor(tensor_names.embed_tokens)?;
         let embed_shape = params.get_tensor_shape(tensor_names.embed_tokens).unwrap();
-        let embed_array = Array2::from_shape_vec(
-            (embed_shape[0], embed_shape[1]),
-            embed_data.clone(),
-        )?;
+        let embed_array =
+            Array2::from_shape_vec((embed_shape[0], embed_shape[1]), embed_data.clone())?;
         let embedding = Embedding::new(embed_array.clone());
 
         // For Gemma, LM head uses tied embeddings (transposed)
@@ -296,7 +300,8 @@ impl Gemma {
             // Fall back to standard naming
             params.get_tensor(&format!("{}.post_attention_layernorm.weight", prefix))?
         };
-        let post_feedforward_layernorm = GemmaRMSNorm::new(Array1::from_vec(post_ff_norm_data), config.norm_eps);
+        let post_feedforward_layernorm =
+            GemmaRMSNorm::new(Array1::from_vec(post_ff_norm_data), config.norm_eps);
 
         // Load attention projections
         let q_proj = Self::load_weight(params, &format!("{}.self_attn.q_proj.weight", prefix))?;
@@ -341,7 +346,9 @@ impl Gemma {
         self.norm.forward(state);
 
         // LM head projection
-        state.logits.assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
+        state
+            .logits
+            .assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
     }
 
     /// Optimized forward pass
@@ -358,7 +365,10 @@ impl Gemma {
         self.norm.fast_forward(state);
 
         // LM head projection (parallel when available)
-        state.logits.assign(&kernels::fast_matmul_vec(&self.lm_head, &state.hidden_state));
+        state.logits.assign(&kernels::fast_matmul_vec(
+            &self.lm_head,
+            &state.hidden_state,
+        ));
     }
 }
 
@@ -447,7 +457,11 @@ impl<'a> LazyGemma<'a> {
         })
     }
 
-    fn create_lazy_layer(params: &Parameters, layer_idx: usize, config: &Config) -> Result<LazyGemmaLayer> {
+    fn create_lazy_layer(
+        params: &Parameters,
+        layer_idx: usize,
+        config: &Config,
+    ) -> Result<LazyGemmaLayer> {
         let prefix = format!("model.layers.{}", layer_idx);
 
         // Load norms eagerly
@@ -516,7 +530,10 @@ impl<'a> LazyGemma<'a> {
 
     fn forward_layer(&self, state: &mut InferenceState, layer: &LazyGemmaLayer, debug: bool) {
         if debug && layer.layer_idx % 8 == 0 {
-            eprintln!("  Lazy Gemma Layer {}/{}", layer.layer_idx, self.config.n_layers);
+            eprintln!(
+                "  Lazy Gemma Layer {}/{}",
+                layer.layer_idx, self.config.n_layers
+            );
         }
 
         // Save residual

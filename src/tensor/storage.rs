@@ -366,10 +366,7 @@ impl TensorStorage {
 
         for group in data.chunks(group_size) {
             // Find max absolute value in group
-            let max_abs = group
-                .iter()
-                .map(|x| x.abs())
-                .fold(0.0f32, |a, b| a.max(b));
+            let max_abs = group.iter().map(|x| x.abs()).fold(0.0f32, |a, b| a.max(b));
 
             // Scale to fit in [-127, 127]
             let scale = if max_abs > 0.0 { max_abs / 127.0 } else { 1.0 };
@@ -398,10 +395,7 @@ impl TensorStorage {
 
         for group in data.chunks(group_size) {
             // Find max absolute value in group
-            let max_abs = group
-                .iter()
-                .map(|x| x.abs())
-                .fold(0.0f32, |a, b| a.max(b));
+            let max_abs = group.iter().map(|x| x.abs()).fold(0.0f32, |a, b| a.max(b));
 
             // Scale to fit in [-7, 7] (we use offset encoding: stored as [0, 15], represent -8 to 7)
             let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
@@ -638,8 +632,7 @@ impl UnifiedTensor {
     pub fn to_array2(&self) -> Array<f32, Ix2> {
         assert!(self.shape.len() == 2, "Tensor must be 2D");
         let data = self.storage.to_f32();
-        Array::from_shape_vec((self.shape[0], self.shape[1]), data)
-            .expect("Shape mismatch")
+        Array::from_shape_vec((self.shape[0], self.shape[1]), data).expect("Shape mismatch")
     }
 
     /// Convert to ndarray Array3 (dequantizes if needed).
@@ -697,7 +690,7 @@ impl UnifiedTensor {
 // =============================================================================
 
 /// Configuration for mixed precision inference.
-/// 
+///
 /// Mixed precision allows using different data types for different parts of the model
 /// to balance memory usage, speed, and numerical precision.
 #[derive(Debug, Clone)]
@@ -705,23 +698,23 @@ pub struct MixedPrecisionConfig {
     /// Data type for model weights (dense layers).
     /// Use INT4/INT8 for memory efficiency.
     pub weights_dtype: Dtype,
-    
+
     /// Data type for embedding weights.
     /// Often kept at higher precision for quality.
     pub embedding_dtype: Dtype,
-    
+
     /// Data type for activations (intermediate computations).
     /// FP16/FP32 for numerical stability.
     pub activation_dtype: Dtype,
-    
+
     /// Data type for KV cache storage.
     /// FP16 is common for balance of memory and precision.
     pub kv_cache_dtype: Dtype,
-    
+
     /// Data type for attention score computation.
     /// FP32 is recommended for numerical stability.
     pub attention_dtype: Dtype,
-    
+
     /// Data type for output logits.
     pub output_dtype: Dtype,
 }
@@ -800,14 +793,14 @@ impl MixedPrecisionConfig {
 
     /// Estimate memory usage for a model with given parameters.
     pub fn estimate_memory_mb(&self, params: ModelSizeParams) -> f32 {
-        let weights_bytes = params.total_weight_params as f32 
-            * self.weights_dtype.element_size() as f32;
-        let embedding_bytes = params.embedding_params as f32 
-            * self.embedding_dtype.element_size() as f32;
-        let kv_cache_bytes = params.kv_cache_elements as f32 
-            * self.kv_cache_dtype.element_size() as f32;
-        let activation_bytes = params.max_activation_elements as f32 
-            * self.activation_dtype.element_size() as f32;
+        let weights_bytes =
+            params.total_weight_params as f32 * self.weights_dtype.element_size() as f32;
+        let embedding_bytes =
+            params.embedding_params as f32 * self.embedding_dtype.element_size() as f32;
+        let kv_cache_bytes =
+            params.kv_cache_elements as f32 * self.kv_cache_dtype.element_size() as f32;
+        let activation_bytes =
+            params.max_activation_elements as f32 * self.activation_dtype.element_size() as f32;
 
         (weights_bytes + embedding_bytes + kv_cache_bytes + activation_bytes) / (1024.0 * 1024.0)
     }
@@ -833,7 +826,7 @@ impl ModelSizeParams {
             total_weight_params: 7_000_000_000,
             embedding_params: 32_000 * 4096, // vocab_size * hidden_size
             kv_cache_elements: 32 * 2 * 8 * 128 * max_seq_len, // n_layers * 2 * n_kv_heads * head_dim * seq_len
-            max_activation_elements: 4096 * 4, // hidden_size * batch_size
+            max_activation_elements: 4096 * 4,                 // hidden_size * batch_size
         }
     }
 
@@ -893,10 +886,7 @@ impl DeviceTransfer for UnifiedTensor {
                     backend.to_device_1d(&arr)?
                 } else {
                     let size: usize = self.shape[1..].iter().product();
-                    let arr = ndarray::Array2::from_shape_vec(
-                        (self.shape[0], size),
-                        f32_data,
-                    )?;
+                    let arr = ndarray::Array2::from_shape_vec((self.shape[0], size), f32_data)?;
                     backend.to_device_2d(&arr)?
                 };
                 let storage = TensorStorage::CudaF32(CudaF32Storage {
@@ -915,10 +905,7 @@ impl DeviceTransfer for UnifiedTensor {
                     backend.to_device_1d(&arr)?
                 } else {
                     let size: usize = self.shape[1..].iter().product();
-                    let arr = ndarray::Array2::from_shape_vec(
-                        (self.shape[0], size),
-                        f32_data,
-                    )?;
+                    let arr = ndarray::Array2::from_shape_vec((self.shape[0], size), f32_data)?;
                     backend.to_device_2d(&arr)?
                 };
                 let storage = TensorStorage::MetalF32(MetalF32Storage { tensor });
@@ -934,10 +921,7 @@ impl DeviceTransfer for UnifiedTensor {
                     backend.to_device_1d(&arr)?
                 } else {
                     let size: usize = self.shape[1..].iter().product();
-                    let arr = ndarray::Array2::from_shape_vec(
-                        (self.shape[0], size),
-                        f32_data,
-                    )?;
+                    let arr = ndarray::Array2::from_shape_vec((self.shape[0], size), f32_data)?;
                     backend.to_device_2d(&arr)?
                 };
                 let storage = TensorStorage::RocmF32(RocmF32Storage {
@@ -956,10 +940,7 @@ impl DeviceTransfer for UnifiedTensor {
                     backend.to_device_1d(&arr)?
                 } else {
                     let size: usize = self.shape[1..].iter().product();
-                    let arr = ndarray::Array2::from_shape_vec(
-                        (self.shape[0], size),
-                        f32_data,
-                    )?;
+                    let arr = ndarray::Array2::from_shape_vec((self.shape[0], size), f32_data)?;
                     backend.to_device_2d(&arr)?
                 };
                 let storage = TensorStorage::OpenCLF32(OpenCLF32Storage { tensor });

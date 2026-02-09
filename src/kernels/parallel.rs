@@ -38,11 +38,11 @@ pub struct WorkDistributionConfig {
 impl Default for WorkDistributionConfig {
     fn default() -> Self {
         Self {
-            min_chunk_size: 64,        // Minimum to amortize task overhead
-            max_chunk_size: 4096,      // Maximum to ensure work stealing has opportunity
-            tasks_per_thread: 4,       // Balance between overhead and stealing
-            numa_aware: false,         // Disabled by default (requires OS support)
-            cache_line_size: 64,       // Standard x86/ARM cache line
+            min_chunk_size: 64,   // Minimum to amortize task overhead
+            max_chunk_size: 4096, // Maximum to ensure work stealing has opportunity
+            tasks_per_thread: 4,  // Balance between overhead and stealing
+            numa_aware: false,    // Disabled by default (requires OS support)
+            cache_line_size: 64,  // Standard x86/ARM cache line
         }
     }
 }
@@ -52,11 +52,11 @@ impl WorkDistributionConfig {
     pub fn for_matmul(matrix_rows: usize, matrix_cols: usize) -> Self {
         let work_size = matrix_rows;
         let num_threads = num_cpus();
-        
+
         // Compute optimal chunk size based on work and threads
         let base_chunk = work_size / (num_threads * 4); // 4 tasks per thread
         let optimal_chunk = base_chunk.clamp(64, 1024);
-        
+
         Self {
             min_chunk_size: 64.min(matrix_cols),
             max_chunk_size: optimal_chunk.max(128),
@@ -65,21 +65,21 @@ impl WorkDistributionConfig {
             cache_line_size: 64,
         }
     }
-    
+
     /// Create a configuration optimized for attention operations
     pub fn for_attention(n_heads: usize, seq_len: usize) -> Self {
         // For attention, we want each head as a task, but with subtasks for long sequences
         let subtasks_per_head = if seq_len > 512 { 2 } else { 1 };
-        
+
         Self {
-            min_chunk_size: 1,  // Heads are natural work units
+            min_chunk_size: 1, // Heads are natural work units
             max_chunk_size: n_heads,
             tasks_per_thread: subtasks_per_head,
             numa_aware: false,
             cache_line_size: 64,
         }
     }
-    
+
     /// Compute optimal chunk size for given work amount
     pub fn optimal_chunk_size(&self, total_work: usize) -> usize {
         let num_threads = num_cpus();
@@ -115,19 +115,19 @@ impl WorkStealingStats {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     pub fn record_task(&self) {
         self.tasks_created.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     pub fn record_local(&self) {
         self.local_tasks.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     pub fn record_stolen(&self) {
         self.stolen_tasks.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     pub fn steal_ratio(&self) -> f32 {
         let total = self.tasks_created.load(Ordering::Relaxed);
         let stolen = self.stolen_tasks.load(Ordering::Relaxed);
@@ -152,9 +152,9 @@ pub fn matmul_vec_adaptive(
     let (rows, cols) = w.dim();
     let x_slice = x.as_slice().expect("x must be contiguous");
     let w_slice = w.as_slice().expect("w must be contiguous");
-    
+
     let chunk_size = config.optimal_chunk_size(rows);
-    
+
     let result: Vec<f32> = (0..rows)
         .into_par_iter()
         .with_min_len(chunk_size)
@@ -167,7 +167,7 @@ pub fn matmul_vec_adaptive(
             sum
         })
         .collect();
-    
+
     Array1::from_vec(result)
 }
 
@@ -192,9 +192,9 @@ pub fn matmul_vec_adaptive_into(
     let x_slice = x.as_slice().expect("x must be contiguous");
     let w_slice = w.as_slice().expect("w must be contiguous");
     let out_slice = out.as_slice_mut().expect("out must be contiguous");
-    
+
     let chunk_size = config.optimal_chunk_size(rows);
-    
+
     out_slice
         .par_iter_mut()
         .enumerate()
@@ -221,7 +221,7 @@ pub fn matmul_vec_adaptive_into(
 }
 
 /// NUMA-aware memory hint for buffer allocation
-/// 
+///
 /// On supported systems, this can improve memory locality for parallel workloads.
 /// Currently provides hints only; actual NUMA binding requires OS-specific APIs.
 #[derive(Debug, Clone, Copy)]
@@ -249,7 +249,7 @@ impl NumaHint {
             interleave: false,
         }
     }
-    
+
     /// Create a hint to interleave across all NUMA nodes
     /// This can be beneficial for large shared data structures
     pub fn interleaved() -> Self {
@@ -297,17 +297,17 @@ impl PipelineState {
             stage_indices: vec![0; num_stages],
         }
     }
-    
+
     /// Check if the pipeline can accept a new token
     pub fn can_accept(&self) -> bool {
         self.pipeline_depth < self.max_depth
     }
-    
+
     /// Check if the pipeline has completed tokens ready
     pub fn has_output(&self) -> bool {
         self.pipeline_depth > 0 && self.stage_indices[self.num_stages - 1] > 0
     }
-    
+
     /// Advance the pipeline by one step
     pub fn advance(&mut self) {
         // Shift all stages forward
@@ -316,7 +316,7 @@ impl PipelineState {
         }
         self.stage_indices[0] = 0;
     }
-    
+
     /// Fill the pipeline with a new token
     pub fn push(&mut self) {
         if self.can_accept() {
@@ -324,7 +324,7 @@ impl PipelineState {
             self.stage_indices[0] = self.pipeline_depth;
         }
     }
-    
+
     /// Pop a completed token from the pipeline
     pub fn pop(&mut self) -> Option<usize> {
         if self.has_output() {
@@ -343,7 +343,7 @@ impl PipelineState {
 /// Manages the execution of transformer layers in a pipelined fashion,
 /// allowing overlap between different layers processing different tokens.
 #[cfg(feature = "parallel")]
-#[allow(dead_code)]  // Fields used by future pipeline execution methods
+#[allow(dead_code)] // Fields used by future pipeline execution methods
 pub struct PipelineExecutor<L: Send + Sync> {
     /// The layers to execute
     layers: Vec<L>,
@@ -358,27 +358,25 @@ impl<L: Send + Sync> PipelineExecutor<L> {
     /// Create a new pipeline executor
     pub fn new(layers: Vec<L>, hidden_size: usize, max_depth: usize) -> Self {
         let num_stages = layers.len();
-        let buffers = (0..max_depth)
-            .map(|_| vec![0.0f32; hidden_size])
-            .collect();
-        
+        let buffers = (0..max_depth).map(|_| vec![0.0f32; hidden_size]).collect();
+
         Self {
             layers,
             state: PipelineState::new(num_stages, max_depth),
             buffers,
         }
     }
-    
+
     /// Get the number of layers/stages
     pub fn num_stages(&self) -> usize {
         self.layers.len()
     }
-    
+
     /// Check if pipeline can accept more input
     pub fn can_accept(&self) -> bool {
         self.state.can_accept()
     }
-    
+
     /// Check if output is ready
     pub fn has_output(&self) -> bool {
         self.state.has_output()
@@ -412,7 +410,7 @@ impl PipelineConfig {
         // Each micro-batch needs hidden_size * 4 bytes per layer
         let bytes_per_micro_batch = n_layers * hidden_size * 4;
         let max_micro_batches = memory_budget / bytes_per_micro_batch;
-        
+
         Self {
             num_micro_batches: max_micro_batches.clamp(2, 8),
             async_execution: false,
@@ -472,7 +470,7 @@ impl TensorParallelConfig {
         if world_size == 1 {
             return Self::default();
         }
-        
+
         Self {
             world_size,
             rank,
@@ -486,7 +484,7 @@ impl TensorParallelConfig {
             mlp_down_strategy: TensorParallelStrategy::RowParallel,
         }
     }
-    
+
     /// Compute the local size for a dimension that is partitioned
     pub fn local_size(&self, global_size: usize) -> usize {
         if self.world_size == 1 {
@@ -495,7 +493,7 @@ impl TensorParallelConfig {
             global_size.div_ceil(self.world_size)
         }
     }
-    
+
     /// Compute the offset for this rank's partition
     pub fn local_offset(&self, global_size: usize) -> usize {
         let local_size = self.local_size(global_size);
@@ -524,12 +522,12 @@ pub fn column_parallel_linear(
     let local_n = config.local_size(n);
     let offset = config.local_offset(n);
     let end = (offset + local_n).min(n);
-    
+
     let x_slice = x.as_slice().expect("x must be contiguous");
-    
+
     // Compute local output
     let mut local_output = vec![0.0f32; end - offset];
-    
+
     local_output
         .par_iter_mut()
         .enumerate()
@@ -537,14 +535,14 @@ pub fn column_parallel_linear(
             let global_i = offset + local_i;
             let row = w.row(global_i);
             let row_slice = row.as_slice().expect("row must be contiguous");
-            
+
             let mut sum = 0.0f32;
             for j in 0..d {
                 sum += row_slice[j] * x_slice[j];
             }
             *out_val = sum;
         });
-    
+
     Array1::from_vec(local_output)
 }
 
@@ -558,7 +556,7 @@ pub fn column_parallel_linear(
     let local_n = config.local_size(n);
     let offset = config.local_offset(n);
     let end = (offset + local_n).min(n);
-    
+
     // Extract the local rows and compute
     let local_w = w.slice(ndarray::s![offset..end, ..]);
     local_w.dot(x)
@@ -584,28 +582,28 @@ pub fn row_parallel_linear(
     let local_d = config.local_size(d);
     let offset = config.local_offset(d);
     let end = (offset + local_d).min(d);
-    
+
     // Note: In a real distributed setup, x would already be partitioned
     // and w would be sliced accordingly. Here we slice for simulation.
     let x_slice = &x.as_slice().expect("x must be contiguous")[offset..end];
-    
+
     // Compute partial output (needs all-reduce in distributed setting)
     let mut partial_output = vec![0.0f32; n];
-    
+
     partial_output
         .par_iter_mut()
         .enumerate()
         .for_each(|(i, out_val)| {
             let row = w.row(i);
             let row_slice = row.as_slice().expect("row must be contiguous");
-            
+
             let mut sum = 0.0f32;
             for (j, &x_val) in x_slice.iter().enumerate() {
                 sum += row_slice[offset + j] * x_val;
             }
             *out_val = sum;
         });
-    
+
     Array1::from_vec(partial_output)
 }
 
@@ -619,7 +617,7 @@ pub fn row_parallel_linear(
     let local_d = config.local_size(d);
     let offset = config.local_offset(d);
     let end = (offset + local_d).min(d);
-    
+
     // Slice input and weights
     let x_slice = x.slice(ndarray::s![offset..end]);
     let local_w = w.slice(ndarray::s![.., offset..end]);
@@ -635,20 +633,20 @@ pub fn all_reduce_sum(partials: &[Array1<f32>]) -> Array1<f32> {
     if partials.is_empty() {
         return Array1::zeros(0);
     }
-    
+
     let n = partials[0].len();
     let mut result = Array1::zeros(n);
-    
+
     // Parallel reduction across partials
     let result_slice = result.as_slice_mut().expect("result must be contiguous");
-    
+
     result_slice
         .par_iter_mut()
         .enumerate()
         .for_each(|(i, out_val)| {
             *out_val = partials.iter().map(|p| p[i]).sum();
         });
-    
+
     result
 }
 
@@ -657,14 +655,14 @@ pub fn all_reduce_sum(partials: &[Array1<f32>]) -> Array1<f32> {
     if partials.is_empty() {
         return Array1::zeros(0);
     }
-    
+
     let n = partials[0].len();
     let mut result = Array1::zeros(n);
-    
+
     for partial in partials {
         result = result + partial;
     }
-    
+
     result
 }
 
@@ -674,9 +672,9 @@ pub fn all_reduce_sum_inplace(result: &mut Array1<f32>, partials: &[&Array1<f32>
     if partials.is_empty() {
         return;
     }
-    
+
     let result_slice = result.as_slice_mut().expect("result must be contiguous");
-    
+
     result_slice
         .par_iter_mut()
         .enumerate()
@@ -690,7 +688,7 @@ pub fn all_reduce_sum_inplace(result: &mut Array1<f32>, partials: &[&Array1<f32>
     if partials.is_empty() {
         return;
     }
-    
+
     result.fill(0.0);
     for partial in partials {
         for (i, &v) in partial.iter().enumerate() {
@@ -707,19 +705,19 @@ pub fn all_reduce_sum_inplace(result: &mut Array1<f32>, partials: &[&Array1<f32>
 ///
 /// Splits attention computation across heads with optimized chunk sizes.
 #[cfg(feature = "parallel")]
-#[allow(clippy::needless_range_loop)]  // Index-based access required for row iteration
+#[allow(clippy::needless_range_loop)] // Index-based access required for row iteration
 pub fn attention_parallel_adaptive(
-    queries: &Array2<f32>,     // [n_heads, head_dim]
-    keys: &Array2<f32>,        // [seq_len, head_dim]
-    values: &Array2<f32>,      // [seq_len, head_dim]
+    queries: &Array2<f32>, // [n_heads, head_dim]
+    keys: &Array2<f32>,    // [seq_len, head_dim]
+    values: &Array2<f32>,  // [seq_len, head_dim]
     scale: f32,
     config: &WorkDistributionConfig,
 ) -> Array2<f32> {
     let (n_heads, head_dim) = queries.dim();
     let (seq_len, _) = keys.dim();
-    
+
     let chunk_size = config.optimal_chunk_size(n_heads);
-    
+
     // Parallel over heads
     let head_outputs: Vec<Vec<f32>> = (0..n_heads)
         .into_par_iter()
@@ -727,15 +725,15 @@ pub fn attention_parallel_adaptive(
         .map(|h| {
             let query = queries.row(h);
             let query_slice = query.as_slice().expect("query must be contiguous");
-            
+
             // Compute attention scores
             let mut scores = vec![0.0f32; seq_len];
             let mut max_score = f32::NEG_INFINITY;
-            
+
             for i in 0..seq_len {
                 let key_row = keys.row(i);
                 let key_slice = key_row.as_slice().expect("key must be contiguous");
-                
+
                 let mut dot = 0.0f32;
                 for d in 0..head_dim {
                     dot += query_slice[d] * key_slice[d];
@@ -743,7 +741,7 @@ pub fn attention_parallel_adaptive(
                 scores[i] = dot * scale;
                 max_score = max_score.max(scores[i]);
             }
-            
+
             // Softmax
             let mut sum_exp = 0.0f32;
             for s in &mut scores {
@@ -754,23 +752,23 @@ pub fn attention_parallel_adaptive(
             for s in &mut scores {
                 *s *= inv_sum;
             }
-            
+
             // Weighted sum
             let mut output = vec![0.0f32; head_dim];
             for i in 0..seq_len {
                 let weight = scores[i];
                 let value_row = values.row(i);
                 let value_slice = value_row.as_slice().expect("value must be contiguous");
-                
+
                 for d in 0..head_dim {
                     output[d] += weight * value_slice[d];
                 }
             }
-            
+
             output
         })
         .collect();
-    
+
     // Assemble output
     let mut output = Array2::zeros((n_heads, head_dim));
     for (h, head_out) in head_outputs.into_iter().enumerate() {
@@ -778,7 +776,7 @@ pub fn attention_parallel_adaptive(
             output[[h, d]] = v;
         }
     }
-    
+
     output
 }
 
@@ -792,21 +790,21 @@ pub fn attention_parallel_adaptive(
 ) -> Array2<f32> {
     let (n_heads, head_dim) = queries.dim();
     let (seq_len, _) = keys.dim();
-    
+
     let mut output = Array2::zeros((n_heads, head_dim));
-    
+
     for h in 0..n_heads {
         let query = queries.row(h);
         let query_slice = query.as_slice().expect("query must be contiguous");
-        
+
         // Compute attention scores
         let mut scores = vec![0.0f32; seq_len];
         let mut max_score = f32::NEG_INFINITY;
-        
+
         for i in 0..seq_len {
             let key_row = keys.row(i);
             let key_slice = key_row.as_slice().expect("key must be contiguous");
-            
+
             let mut dot = 0.0f32;
             for d in 0..head_dim {
                 dot += query_slice[d] * key_slice[d];
@@ -814,7 +812,7 @@ pub fn attention_parallel_adaptive(
             scores[i] = dot * scale;
             max_score = max_score.max(scores[i]);
         }
-        
+
         // Softmax
         let mut sum_exp = 0.0f32;
         for s in &mut scores {
@@ -825,19 +823,19 @@ pub fn attention_parallel_adaptive(
         for s in &mut scores {
             *s *= inv_sum;
         }
-        
+
         // Weighted sum
         for i in 0..seq_len {
             let weight = scores[i];
             let value_row = values.row(i);
             let value_slice = value_row.as_slice().expect("value must be contiguous");
-            
+
             for d in 0..head_dim {
                 output[[h, d]] += weight * value_slice[d];
             }
         }
     }
-    
+
     output
 }
 
@@ -860,7 +858,7 @@ pub fn mlp_tensor_parallel(
     // Column-parallel gate and up projections (output split)
     let local_gate = column_parallel_linear(gate_proj, x, config);
     let local_up = column_parallel_linear(up_proj, x, config);
-    
+
     // Fused SiLU and multiply (local computation)
     let local_hidden_size = local_gate.len();
     let local_hidden: Vec<f32> = (0..local_hidden_size)
@@ -871,12 +869,12 @@ pub fn mlp_tensor_parallel(
             silu_gate * local_up[i]
         })
         .collect();
-    
+
     // Row-parallel down projection (needs all-reduce)
     // In a distributed setting, each device would have a slice of down_proj
     // and the result would be all-reduced. Here we simulate with the full matrix.
     let local_hidden_arr = Array1::from_vec(local_hidden);
-    
+
     // For proper tensor parallelism, we'd slice down_proj columns
     // to match the local hidden size
     if config.world_size > 1 {
@@ -884,7 +882,7 @@ pub fn mlp_tensor_parallel(
         let local_cols = config.local_size(hidden_dim);
         let col_offset = config.local_offset(hidden_dim);
         let col_end = (col_offset + local_cols).min(hidden_dim);
-        
+
         // Partial output computation
         let mut partial_output = vec![0.0f32; out_dim];
         partial_output
@@ -893,7 +891,7 @@ pub fn mlp_tensor_parallel(
             .for_each(|(i, out_val)| {
                 let row = down_proj.row(i);
                 let row_slice = row.as_slice().expect("row must be contiguous");
-                
+
                 let mut sum = 0.0f32;
                 for (j, &h_val) in local_hidden_arr.iter().enumerate() {
                     if col_offset + j < col_end {
@@ -902,7 +900,7 @@ pub fn mlp_tensor_parallel(
                 }
                 *out_val = sum;
             });
-        
+
         // In real distributed setting, this would be all-reduced
         Array1::from_vec(partial_output)
     } else {
@@ -921,8 +919,9 @@ pub fn mlp_tensor_parallel(
     // Sequential implementation
     let gate = gate_proj.dot(x);
     let up = up_proj.dot(x);
-    
-    let hidden: Array1<f32> = gate.iter()
+
+    let hidden: Array1<f32> = gate
+        .iter()
         .zip(up.iter())
         .map(|(&g, &u)| {
             let silu_g = g / (1.0 + (-g).exp());
@@ -930,7 +929,7 @@ pub fn mlp_tensor_parallel(
         })
         .collect::<Vec<_>>()
         .into();
-    
+
     down_proj.dot(&hidden)
 }
 
@@ -948,122 +947,130 @@ mod tests {
         let config = WorkDistributionConfig::default();
         assert!(config.min_chunk_size > 0);
         assert!(config.max_chunk_size >= config.min_chunk_size);
-        
+
         // Test optimal chunk size calculation
         let chunk = config.optimal_chunk_size(1000);
         assert!(chunk >= config.min_chunk_size);
         assert!(chunk <= config.max_chunk_size);
     }
-    
+
     #[test]
     fn test_work_distribution_for_matmul() {
         let config = WorkDistributionConfig::for_matmul(1024, 4096);
         assert!(config.min_chunk_size > 0);
-        
+
         // Chunk size should be reasonable for the matrix dimensions
         let chunk = config.optimal_chunk_size(1024);
         assert!(chunk <= 1024);
     }
-    
+
     #[test]
     fn test_pipeline_state() {
         let mut state = PipelineState::new(3, 2);
-        
+
         assert!(state.can_accept());
         assert!(!state.has_output());
-        
+
         state.push();
         assert!(state.can_accept());
-        
+
         state.push();
         assert!(!state.can_accept()); // At max depth
-        
+
         // Advance through stages
         state.advance();
         state.advance();
         assert!(state.has_output());
     }
-    
+
     #[test]
     fn test_tensor_parallel_config() {
         let config = TensorParallelConfig::new(4, 0);
-        
+
         assert_eq!(config.world_size, 4);
         assert_eq!(config.rank, 0);
-        
+
         // Test local size calculation
         assert_eq!(config.local_size(1024), 256);
         assert_eq!(config.local_offset(1024), 0);
-        
+
         let config2 = TensorParallelConfig::new(4, 2);
         assert_eq!(config2.local_offset(1024), 512);
     }
-    
+
     #[test]
     fn test_matmul_vec_adaptive() {
         let w = Array2::from_shape_fn((8, 4), |(i, j)| (i * 4 + j) as f32 * 0.1);
         let x = array![1.0, 2.0, 3.0, 4.0];
         let config = WorkDistributionConfig::default();
-        
+
         let result = matmul_vec_adaptive(&w, &x, &config);
         let expected = w.dot(&x);
-        
+
         for i in 0..result.len() {
-            assert!((result[i] - expected[i]).abs() < 1e-5, "Index {} mismatch", i);
+            assert!(
+                (result[i] - expected[i]).abs() < 1e-5,
+                "Index {} mismatch",
+                i
+            );
         }
     }
-    
+
     #[test]
     fn test_column_parallel_linear() {
         let w = Array2::from_shape_fn((8, 4), |(i, j)| (i * 4 + j) as f32 * 0.1);
         let x = array![1.0, 2.0, 3.0, 4.0];
-        
+
         // Single device (no parallelism)
         let config_single = TensorParallelConfig::default();
         let result_single = column_parallel_linear(&w, &x, &config_single);
         let expected = w.dot(&x);
-        
+
         for i in 0..result_single.len() {
-            assert!((result_single[i] - expected[i]).abs() < 1e-5, "Index {} mismatch", i);
+            assert!(
+                (result_single[i] - expected[i]).abs() < 1e-5,
+                "Index {} mismatch",
+                i
+            );
         }
-        
+
         // Multi-device simulation
         let config_0 = TensorParallelConfig::new(2, 0);
         let config_1 = TensorParallelConfig::new(2, 1);
-        
+
         let result_0 = column_parallel_linear(&w, &x, &config_0);
         let result_1 = column_parallel_linear(&w, &x, &config_1);
-        
+
         // Results should be partial outputs
         assert_eq!(result_0.len(), 4);
         assert_eq!(result_1.len(), 4);
-        
+
         // Combined should match full result
         for i in 0..4 {
             assert!((result_0[i] - expected[i]).abs() < 1e-5);
             assert!((result_1[i] - expected[i + 4]).abs() < 1e-5);
         }
     }
-    
+
     #[test]
     fn test_all_reduce_sum() {
         let a = array![1.0, 2.0, 3.0];
         let b = array![4.0, 5.0, 6.0];
         let c = array![0.1, 0.2, 0.3];
-        
+
         let result = all_reduce_sum(&[a, b, c]);
-        
+
         assert!((result[0] - 5.1).abs() < 1e-5);
         assert!((result[1] - 7.2).abs() < 1e-5);
         assert!((result[2] - 9.3).abs() < 1e-5);
     }
-    
+
     #[test]
     fn test_attention_parallel_adaptive() {
         let n_heads = 4;
         let head_dim = 8;
         let seq_len = 16;
-        
+
         let queries = Array2::from_shape_fn((n_heads, head_dim), |(h, d)| {
             ((h * head_dim + d) as f32 * 0.1).sin()
         });
@@ -1073,14 +1080,14 @@ mod tests {
         let values = Array2::from_shape_fn((seq_len, head_dim), |(s, d)| {
             (s * head_dim + d) as f32 * 0.01
         });
-        
+
         let scale = 1.0 / (head_dim as f32).sqrt();
         let config = WorkDistributionConfig::for_attention(n_heads, seq_len);
-        
+
         let output = attention_parallel_adaptive(&queries, &keys, &values, scale, &config);
-        
+
         assert_eq!(output.dim(), (n_heads, head_dim));
-        
+
         // Output should be valid (no NaN or Inf)
         for h in 0..n_heads {
             for d in 0..head_dim {
@@ -1088,12 +1095,12 @@ mod tests {
             }
         }
     }
-    
+
     #[test]
     fn test_mlp_tensor_parallel_single() {
         let hidden = 4;
         let intermediate = 8;
-        
+
         let x = array![1.0, 2.0, 3.0, 4.0];
         let gate_proj = Array2::from_shape_fn((intermediate, hidden), |(i, j)| {
             (i * hidden + j) as f32 * 0.05
@@ -1104,16 +1111,17 @@ mod tests {
         let down_proj = Array2::from_shape_fn((hidden, intermediate), |(i, j)| {
             (i * intermediate + j) as f32 * 0.02
         });
-        
+
         let config = TensorParallelConfig::default();
         let result = mlp_tensor_parallel(&x, &gate_proj, &up_proj, &down_proj, &config);
-        
+
         assert_eq!(result.len(), hidden);
-        
+
         // Should match non-parallel reference
         let gate = gate_proj.dot(&x);
         let up = up_proj.dot(&x);
-        let hidden_vec: Array1<f32> = gate.iter()
+        let hidden_vec: Array1<f32> = gate
+            .iter()
             .zip(up.iter())
             .map(|(&g, &u)| {
                 let silu_g = g / (1.0 + (-g).exp());
@@ -1122,23 +1130,27 @@ mod tests {
             .collect::<Vec<_>>()
             .into();
         let expected = down_proj.dot(&hidden_vec);
-        
+
         for i in 0..result.len() {
-            assert!((result[i] - expected[i]).abs() < 1e-4, "Index {} mismatch", i);
+            assert!(
+                (result[i] - expected[i]).abs() < 1e-4,
+                "Index {} mismatch",
+                i
+            );
         }
     }
 
     #[test]
     fn test_work_stealing_stats() {
         let stats = WorkStealingStats::new();
-        
+
         stats.record_task();
         stats.record_task();
         stats.record_task();
         stats.record_local();
         stats.record_local();
         stats.record_stolen();
-        
+
         assert_eq!(stats.tasks_created.load(Ordering::Relaxed), 3);
         assert_eq!(stats.local_tasks.load(Ordering::Relaxed), 2);
         assert_eq!(stats.stolen_tasks.load(Ordering::Relaxed), 1);

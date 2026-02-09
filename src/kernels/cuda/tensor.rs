@@ -293,13 +293,13 @@ mod tests {
     fn test_cuda_tensor_shape() {
         // This test doesn't require actual CUDA hardware
         // Just test the shape logic
-        
+
         // We can't create real CudaSlice without a device, but we can test
         // the shape computation logic through other means
         let shape_2d = vec![10, 20];
         let len: usize = shape_2d.iter().product();
         assert_eq!(len, 200);
-        
+
         let shape_3d = vec![5, 10, 20];
         let len: usize = shape_3d.iter().product();
         assert_eq!(len, 1000);
@@ -312,18 +312,18 @@ mod tests {
         let max_seq_len = 2048;
         let n_kv_heads = 8;
         let head_dim = 128;
-        
+
         let per_layer = max_seq_len * n_kv_heads * head_dim;
         let per_pos = n_kv_heads * head_dim;
-        
+
         // Layer 0, position 0
         let offset = 0 * per_layer + 0 * per_pos;
         assert_eq!(offset, 0);
-        
+
         // Layer 1, position 0
         let offset = 1 * per_layer + 0 * per_pos;
         assert_eq!(offset, per_layer);
-        
+
         // Layer 0, position 100
         let offset = 0 * per_layer + 100 * per_pos;
         assert_eq!(offset, 100 * per_pos);

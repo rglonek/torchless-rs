@@ -25,9 +25,9 @@
 
 use crate::kernels;
 use crate::loader::{Config, Parameters};
-use crate::model::{InferenceState, Embedding, RMSNorm, MLP};
+use crate::model::architecture::{ArchitectureConfig, Model, ModelArchitecture};
 use crate::model::LazyEmbedding;
-use crate::model::architecture::{Model, ModelArchitecture, ArchitectureConfig};
+use crate::model::{Embedding, InferenceState, RMSNorm, MLP};
 use anyhow::Result;
 use ndarray::{s, Array1, Array2};
 
@@ -119,7 +119,9 @@ impl QwenAttention {
             let kv_head = h / kv_groups;
 
             let q_head = state.q_state.row(h);
-            let k_cache_view = state.k_cache.slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
+            let k_cache_view = state
+                .k_cache
+                .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
 
             // Compute scores
             {
@@ -129,7 +131,9 @@ impl QwenAttention {
             }
 
             // Weighted sum
-            let v_cache_view = state.v_cache.slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
+            let v_cache_view = state
+                .v_cache
+                .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
             let scores_view = state.scores.slice(s![h, ..seq_len]);
             let mut context_row = state.context.slice_mut(s![h, ..]);
             kernels::weighted_sum_rows(scores_view, v_cache_view, &mut context_row);
@@ -199,7 +203,9 @@ impl QwenAttention {
             let kv_head = h / kv_groups;
 
             let q_head = state.q_state.row(h);
-            let k_cache_view = state.k_cache.slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
+            let k_cache_view = state
+                .k_cache
+                .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
 
             {
                 let mut scores_slice = state.scores.slice_mut(s![h, ..seq_len]);
@@ -207,7 +213,9 @@ impl QwenAttention {
                 kernels::softmax_view(&mut scores_slice);
             }
 
-            let v_cache_view = state.v_cache.slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
+            let v_cache_view = state
+                .v_cache
+                .slice(s![self.layer_idx, kv_head, ..seq_len, ..]);
             let scores_view = state.scores.slice(s![h, ..seq_len]);
             let mut context_row = state.context.slice_mut(s![h, ..]);
             kernels::weighted_sum_rows(scores_view, v_cache_view, &mut context_row);
@@ -235,7 +243,12 @@ pub struct QwenLayer {
 
 impl QwenLayer {
     pub fn new(ln_1: RMSNorm, attn: QwenAttention, ln_2: RMSNorm, mlp: MLP) -> Self {
-        Self { ln_1, attn, ln_2, mlp }
+        Self {
+            ln_1,
+            attn,
+            ln_2,
+            mlp,
+        }
     }
 
     /// Forward pass
@@ -386,8 +399,11 @@ impl Qwen {
         // Try Qwen naming first
         let qwen_prefix = format!("transformer.h.{}", layer_idx);
         let standard_prefix = format!("model.layers.{}", layer_idx);
-        
-        if params.get_tensor_shape(&format!("{}.ln_1.weight", qwen_prefix)).is_some() {
+
+        if params
+            .get_tensor_shape(&format!("{}.ln_1.weight", qwen_prefix))
+            .is_some()
+        {
             qwen_prefix
         } else {
             standard_prefix
@@ -401,13 +417,15 @@ impl Qwen {
         // Load norms
         let ln1_name = format!("{}.ln_1.weight", prefix);
         let ln1_fallback = format!("{}.input_layernorm.weight", prefix);
-        let ln_1_data = params.get_tensor(&ln1_name)
+        let ln_1_data = params
+            .get_tensor(&ln1_name)
             .or_else(|_| params.get_tensor(&ln1_fallback))?;
         let ln_1 = RMSNorm::new(Array1::from_vec(ln_1_data), config.norm_eps);
 
         let ln2_name = format!("{}.ln_2.weight", prefix);
         let ln2_fallback = format!("{}.post_attention_layernorm.weight", prefix);
-        let ln_2_data = params.get_tensor(&ln2_name)
+        let ln_2_data = params
+            .get_tensor(&ln2_name)
             .or_else(|_| params.get_tensor(&ln2_fallback))?;
         let ln_2 = RMSNorm::new(Array1::from_vec(ln_2_data), config.norm_eps);
 
@@ -419,7 +437,14 @@ impl Qwen {
             // Fused QKV
             let c_attn = Self::load_weight(params, &c_attn_name)?;
             let c_proj = Self::load_weight(params, &c_proj_name)?;
-            QwenAttention::new(layer_idx, c_attn, c_proj, config.n_heads, config.n_kv_heads, head_dim)
+            QwenAttention::new(
+                layer_idx,
+                c_attn,
+                c_proj,
+                config.n_heads,
+                config.n_kv_heads,
+                head_dim,
+            )
         } else {
             // Separate Q, K, V (fall back to standard naming)
             let q = Self::load_weight(params, &format!("{}.self_attn.q_proj.weight", prefix))?;
@@ -450,7 +475,14 @@ impl Qwen {
                 }
             }
 
-            QwenAttention::new(layer_idx, c_attn, o, config.n_heads, config.n_kv_heads, head_dim)
+            QwenAttention::new(
+                layer_idx,
+                c_attn,
+                o,
+                config.n_heads,
+                config.n_kv_heads,
+                head_dim,
+            )
         };
 
         // Load MLP (try Qwen naming first)
@@ -494,7 +526,9 @@ impl Qwen {
         self.ln_f.forward(state);
 
         // LM head projection
-        state.logits.assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
+        state
+            .logits
+            .assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
     }
 
     /// Optimized forward pass
@@ -511,7 +545,10 @@ impl Qwen {
         self.ln_f.fast_forward(state);
 
         // LM head projection (parallel when available)
-        state.logits.assign(&kernels::fast_matmul_vec(&self.lm_head, &state.hidden_state));
+        state.logits.assign(&kernels::fast_matmul_vec(
+            &self.lm_head,
+            &state.hidden_state,
+        ));
     }
 }
 
@@ -580,16 +617,18 @@ impl<'a> LazyQwen<'a> {
         let mut layers = Vec::new();
         for i in 0..config.n_layers {
             let prefix = Qwen::get_layer_prefix(params, i);
-            
+
             let ln1_name = format!("{}.ln_1.weight", prefix);
             let ln1_fallback = format!("{}.input_layernorm.weight", prefix);
-            let ln1_data = params.get_tensor(&ln1_name)
+            let ln1_data = params
+                .get_tensor(&ln1_name)
                 .or_else(|_| params.get_tensor(&ln1_fallback))?;
             let ln_1 = RMSNorm::new(Array1::from_vec(ln1_data), config.norm_eps);
 
             let ln2_name = format!("{}.ln_2.weight", prefix);
             let ln2_fallback = format!("{}.post_attention_layernorm.weight", prefix);
-            let ln2_data = params.get_tensor(&ln2_name)
+            let ln2_data = params
+                .get_tensor(&ln2_name)
                 .or_else(|_| params.get_tensor(&ln2_fallback))?;
             let ln_2 = RMSNorm::new(Array1::from_vec(ln2_data), config.norm_eps);
 
@@ -674,11 +713,17 @@ impl<'a> LazyQwen<'a> {
             state.hidden_state.assign(&Array1::from_vec(attn_out));
         } else {
             // Fall back to separate Q, K, V
-            let q_view = self.params.get_tensor_view(&format!("{}.self_attn.q_proj.weight", prefix)).unwrap();
+            let q_view = self
+                .params
+                .get_tensor_view(&format!("{}.self_attn.q_proj.weight", prefix))
+                .unwrap();
             let hidden_slice = state.hidden_state.as_slice().unwrap();
             let q = q_view.matmul_vec(hidden_slice);
-            
-            let o_view = self.params.get_tensor_view(&format!("{}.self_attn.o_proj.weight", prefix)).unwrap();
+
+            let o_view = self
+                .params
+                .get_tensor_view(&format!("{}.self_attn.o_proj.weight", prefix))
+                .unwrap();
             let attn_out = o_view.matmul_vec(&q);
             state.hidden_state.assign(&Array1::from_vec(attn_out));
         }
@@ -700,12 +745,13 @@ impl<'a> LazyQwen<'a> {
         if let Ok(gate_view) = self.params.get_tensor_view(&gate_name) {
             let hidden_slice = state.hidden_state.as_slice().unwrap();
             let gate = gate_view.matmul_vec(hidden_slice);
-            
+
             let up_view = self.params.get_tensor_view(&up_name).unwrap();
             let up = up_view.matmul_vec(hidden_slice);
 
             // SwiGLU
-            let intermediate: Vec<f32> = gate.iter()
+            let intermediate: Vec<f32> = gate
+                .iter()
                 .zip(up.iter())
                 .map(|(&g, &u)| kernels::silu_scalar(g) * u)
                 .collect();
@@ -715,19 +761,29 @@ impl<'a> LazyQwen<'a> {
             state.hidden_state.assign(&Array1::from_vec(mlp_out));
         } else {
             // Fall back to standard naming
-            let gate_view = self.params.get_tensor_view(&format!("{}.mlp.gate_proj.weight", prefix)).unwrap();
+            let gate_view = self
+                .params
+                .get_tensor_view(&format!("{}.mlp.gate_proj.weight", prefix))
+                .unwrap();
             let hidden_slice = state.hidden_state.as_slice().unwrap();
             let gate = gate_view.matmul_vec(hidden_slice);
-            
-            let up_view = self.params.get_tensor_view(&format!("{}.mlp.up_proj.weight", prefix)).unwrap();
+
+            let up_view = self
+                .params
+                .get_tensor_view(&format!("{}.mlp.up_proj.weight", prefix))
+                .unwrap();
             let up = up_view.matmul_vec(hidden_slice);
 
-            let intermediate: Vec<f32> = gate.iter()
+            let intermediate: Vec<f32> = gate
+                .iter()
                 .zip(up.iter())
                 .map(|(&g, &u)| kernels::silu_scalar(g) * u)
                 .collect();
 
-            let down_view = self.params.get_tensor_view(&format!("{}.mlp.down_proj.weight", prefix)).unwrap();
+            let down_view = self
+                .params
+                .get_tensor_view(&format!("{}.mlp.down_proj.weight", prefix))
+                .unwrap();
             let mlp_out = down_view.matmul_vec(&intermediate);
             state.hidden_state.assign(&Array1::from_vec(mlp_out));
         }

@@ -392,7 +392,12 @@ pub struct BufferMetadata {
 
 impl BufferMetadata {
     /// Create new metadata for a buffer.
-    pub fn new(id: BufferId, size_bytes: usize, num_elements: usize, location: BufferLocation) -> Self {
+    pub fn new(
+        id: BufferId,
+        size_bytes: usize,
+        num_elements: usize,
+        location: BufferLocation,
+    ) -> Self {
         Self {
             id,
             size_bytes,
@@ -452,7 +457,8 @@ impl AllocationTracker {
     pub fn untrack(&self, id: BufferId) -> Option<BufferMetadata> {
         let mut allocs = self.allocations.write().unwrap();
         if let Some(meta) = allocs.remove(&id) {
-            self.total_bytes.fetch_sub(meta.size_bytes, Ordering::Relaxed);
+            self.total_bytes
+                .fetch_sub(meta.size_bytes, Ordering::Relaxed);
             Some(meta)
         } else {
             None
@@ -760,13 +766,8 @@ pub fn estimate_inference_memory(
         dtype_bytes,
     );
 
-    let kv_cache_bytes = estimate_kv_cache_memory(
-        n_layers,
-        n_kv_heads,
-        head_dim,
-        max_seq_len,
-        dtype_bytes,
-    );
+    let kv_cache_bytes =
+        estimate_kv_cache_memory(n_layers, n_kv_heads, head_dim, max_seq_len, dtype_bytes);
 
     // Activation memory (rough estimate)
     let activation_bytes = (hidden_size + intermediate_size * 2) * dtype_bytes * 2;
@@ -1011,7 +1012,11 @@ impl fmt::Display for DeviceCapabilities {
             self.name,
             self.total_memory as f64 / 1024.0 / 1024.0 / 1024.0,
             self.compute_capability,
-            if self.unified_memory { " (unified)" } else { "" }
+            if self.unified_memory {
+                " (unified)"
+            } else {
+                ""
+            }
         )
     }
 }
@@ -1050,9 +1055,15 @@ mod tests {
     #[test]
     fn test_memory_pressure() {
         assert_eq!(MemoryPressure::from_utilization(0.3), MemoryPressure::Low);
-        assert_eq!(MemoryPressure::from_utilization(0.7), MemoryPressure::Medium);
+        assert_eq!(
+            MemoryPressure::from_utilization(0.7),
+            MemoryPressure::Medium
+        );
         assert_eq!(MemoryPressure::from_utilization(0.9), MemoryPressure::High);
-        assert_eq!(MemoryPressure::from_utilization(0.98), MemoryPressure::Critical);
+        assert_eq!(
+            MemoryPressure::from_utilization(0.98),
+            MemoryPressure::Critical
+        );
     }
 
     #[test]
@@ -1071,21 +1082,11 @@ mod tests {
     fn test_allocation_tracker() {
         let tracker = AllocationTracker::new();
 
-        let meta1 = BufferMetadata::new(
-            BufferId::new(),
-            1024,
-            256,
-            BufferLocation::Gpu,
-        );
+        let meta1 = BufferMetadata::new(BufferId::new(), 1024, 256, BufferLocation::Gpu);
         let id1 = meta1.id;
         tracker.track(meta1);
 
-        let meta2 = BufferMetadata::new(
-            BufferId::new(),
-            2048,
-            512,
-            BufferLocation::Gpu,
-        );
+        let meta2 = BufferMetadata::new(BufferId::new(), 2048, 512, BufferLocation::Gpu);
         let id2 = meta2.id;
         tracker.track(meta2);
 
@@ -1132,14 +1133,14 @@ mod tests {
     #[test]
     fn test_inference_memory_estimate() {
         let estimate = estimate_inference_memory(
-            4096,   // hidden_size
-            14336,  // intermediate_size
-            32,     // n_layers
-            32000,  // vocab_size
-            32,     // n_heads
-            8,      // n_kv_heads
-            4096,   // max_seq_len
-            4,      // dtype_bytes (f32)
+            4096,  // hidden_size
+            14336, // intermediate_size
+            32,    // n_layers
+            32000, // vocab_size
+            32,    // n_heads
+            8,     // n_kv_heads
+            4096,  // max_seq_len
+            4,     // dtype_bytes (f32)
         );
 
         // Sanity check - should be in reasonable range for 7B model

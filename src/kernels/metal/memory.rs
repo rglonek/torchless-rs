@@ -52,11 +52,7 @@ impl MetalMemoryPool {
     ///
     /// First tries to reuse a buffer from the pool. If no suitable buffer
     /// is available, allocates a new one.
-    pub fn get_or_alloc(
-        &mut self,
-        device: &Device,
-        min_elements: usize,
-    ) -> anyhow::Result<Buffer> {
+    pub fn get_or_alloc(&mut self, device: &Device, min_elements: usize) -> anyhow::Result<Buffer> {
         let min_size = min_elements * std::mem::size_of::<f32>();
         let bucket_size = round_up_power_of_2(min_size);
 
@@ -79,10 +75,7 @@ impl MetalMemoryPool {
         }
 
         // No suitable buffer found, allocate new one
-        let buffer = device.new_buffer(
-            bucket_size as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
+        let buffer = device.new_buffer(bucket_size as u64, MTLResourceOptions::StorageModeShared);
 
         self.total_allocated_bytes += bucket_size;
         self.in_use_bytes += bucket_size;
@@ -190,19 +183,21 @@ pub fn create_buffer_with_data(device: &Device, data: &[f32]) -> Buffer {
 pub fn create_buffer_zeros(device: &Device, len: usize) -> Buffer {
     let size = len * std::mem::size_of::<f32>();
     let buffer = device.new_buffer(size as u64, MTLResourceOptions::StorageModeShared);
-    
+
     // Zero the buffer
     unsafe {
         std::ptr::write_bytes(buffer.contents() as *mut u8, 0, size);
     }
-    
+
     buffer
 }
 
 /// Copy data from a buffer to a slice.
 pub fn copy_buffer_to_slice(buffer: &Buffer, dst: &mut [f32]) {
     let src = buffer.contents() as *const f32;
-    let len = dst.len().min(buffer.length() as usize / std::mem::size_of::<f32>());
+    let len = dst
+        .len()
+        .min(buffer.length() as usize / std::mem::size_of::<f32>());
     unsafe {
         std::ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), len);
     }
@@ -211,7 +206,9 @@ pub fn copy_buffer_to_slice(buffer: &Buffer, dst: &mut [f32]) {
 /// Copy data from a slice to a buffer.
 pub fn copy_slice_to_buffer(src: &[f32], buffer: &Buffer) {
     let dst = buffer.contents() as *mut f32;
-    let len = src.len().min(buffer.length() as usize / std::mem::size_of::<f32>());
+    let len = src
+        .len()
+        .min(buffer.length() as usize / std::mem::size_of::<f32>());
     unsafe {
         std::ptr::copy_nonoverlapping(src.as_ptr(), dst, len);
     }

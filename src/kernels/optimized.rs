@@ -35,11 +35,7 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut1};
 /// * `weights` - Weight matrix (rows, cols), must be row-major contiguous
 /// * `input` - Input vector (cols,)
 /// * `output` - Output buffer (rows,), will be overwritten
-pub fn matmul_vec_optimized(
-    weights: &Array2<f32>,
-    input: &Array1<f32>,
-    output: &mut Array1<f32>,
-) {
+pub fn matmul_vec_optimized(weights: &Array2<f32>, input: &Array1<f32>, output: &mut Array1<f32>) {
     let (rows, cols) = weights.dim();
     debug_assert_eq!(input.len(), cols);
     debug_assert_eq!(output.len(), rows);

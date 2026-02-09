@@ -40,67 +40,76 @@ pub mod opencl;
 mod tests;
 
 // Re-export backend types for convenient access
-pub use backend::{Backend, BackendPreference, CpuBackend, KernelBackend, init_backend, default_backend};
+pub use backend::{
+    default_backend, init_backend, Backend, BackendPreference, CpuBackend, KernelBackend,
+};
 
 // Re-export backend discovery and device enumeration
 pub use backend::{
-    BackendInfo, BackendType, DeviceInfo,
-    discover_backends, best_available_backend, select_backend_for_model,
-    print_backend_summary, init_backend_with_memory_check,
+    best_available_backend, discover_backends, init_backend_with_memory_check,
+    print_backend_summary, select_backend_for_model, BackendInfo, BackendType, DeviceInfo,
 };
 
 // Re-export unified GPU memory management
 pub use gpu_memory::{
+    compute_f16_bytes,
+    compute_f32_bytes,
+    estimate_inference_memory,
+    estimate_kv_cache_memory,
+    estimate_model_memory,
+    round_up_power_of_2,
+    size_class,
+    AllocationTracker,
     // Buffer tracking
-    BufferId, BufferMetadata, BufferLocation, AllocationTracker,
-    // Memory statistics and configuration
-    MemoryStats, MemoryConfig, MemoryPressure,
-    // Memory pool trait and generic implementation
-    GpuMemoryPool, GenericMemoryPool,
-    // Fallback buffer for GPU/CPU hybrid operation
-    FallbackBuffer,
+    BufferId,
+    BufferLocation,
+    BufferMetadata,
     // Device capabilities
     DeviceCapabilities,
+    // Fallback buffer for GPU/CPU hybrid operation
+    FallbackBuffer,
+    GenericMemoryPool,
+    // Memory pool trait and generic implementation
+    GpuMemoryPool,
     // Memory estimation utilities
     InferenceMemoryEstimate,
-    estimate_model_memory, estimate_kv_cache_memory, estimate_inference_memory,
-    round_up_power_of_2, size_class, compute_f32_bytes, compute_f16_bytes,
+    MemoryConfig,
+    MemoryPressure,
+    // Memory statistics and configuration
+    MemoryStats,
 };
 
 // Re-export CUDA backend types when the feature is enabled
 #[cfg(feature = "cuda")]
-pub use cuda::{CudaBackend, CudaTensor, CudaMemoryPool};
+pub use cuda::{CudaBackend, CudaMemoryPool, CudaTensor};
 
 // Re-export ROCm backend types when the feature is enabled
 #[cfg(feature = "rocm")]
-pub use rocm::{RocmBackend, RocmTensor, RocmMemoryPool};
+pub use rocm::{RocmBackend, RocmMemoryPool, RocmTensor};
 
 // Re-export Metal backend types when the feature is enabled
 #[cfg(feature = "metal-gpu")]
-pub use metal::{MetalBackend, MetalTensor, MetalMemoryPool};
+pub use metal::{MetalBackend, MetalMemoryPool, MetalTensor};
 
 // Re-export OpenCL backend types when the feature is enabled
 #[cfg(feature = "opencl")]
-pub use opencl::{OpenCLBackend, OpenCLTensor, OpenCLMemoryPool};
+pub use opencl::{OpenCLBackend, OpenCLMemoryPool, OpenCLTensor};
 
 // Re-export dispatch types for runtime CPU feature detection
 pub use dispatch::{
-    CpuFeatures, Dispatcher, cpu_features, global_dispatcher,
-    dispatch_matmul_vec, dispatch_matmul_vec_into, dispatch_rmsnorm,
-    dispatch_softmax, dispatch_silu, dispatch_apply_rope,
-    dispatch_compute_attention_scores, dispatch_weighted_sum_rows,
+    cpu_features, dispatch_apply_rope, dispatch_compute_attention_scores, dispatch_matmul_vec,
+    dispatch_matmul_vec_into, dispatch_rmsnorm, dispatch_silu, dispatch_softmax,
+    dispatch_weighted_sum_rows, global_dispatcher, CpuFeatures, Dispatcher,
 };
 
 // Re-export fused kernel functions
 pub use fused::{
-    fused_rmsnorm_linear, fused_rmsnorm_linear_into,
-    fused_swiglu, fused_swiglu_into,
-    fused_attention, fused_attention_into,
-    fused_mlp, fused_mlp_into,
+    fused_attention, fused_attention_into, fused_mlp, fused_mlp_into, fused_rmsnorm_linear,
+    fused_rmsnorm_linear_into, fused_swiglu, fused_swiglu_into,
 };
 
 #[cfg(feature = "parallel")]
-pub use fused::{fused_swiglu_parallel, fused_mlp_parallel};
+pub use fused::{fused_mlp_parallel, fused_swiglu_parallel};
 
 // Re-export architecture-specific availability checks
 pub use avx512::is_avx512_available;
@@ -307,8 +316,10 @@ mod simd_kernels {
             let cos_chunks = cos_slice.chunks_exact(8);
             let sin_chunks = sin_slice.chunks_exact(8);
 
-            for (((first_chunk, second_chunk), cos_chunk), sin_chunk) in
-                first_chunks.zip(second_chunks).zip(cos_chunks).zip(sin_chunks)
+            for (((first_chunk, second_chunk), cos_chunk), sin_chunk) in first_chunks
+                .zip(second_chunks)
+                .zip(cos_chunks)
+                .zip(sin_chunks)
             {
                 let xi = f32x8::from(&*first_chunk);
                 let yi = f32x8::from(&*second_chunk);
@@ -432,11 +443,7 @@ mod parallel_kernels {
         // For each output column, compute the weighted sum in parallel
         out_slice.par_iter_mut().enumerate().for_each(|(j, out_j)| {
             let col = matrix.column(j);
-            *out_j = weights
-                .iter()
-                .zip(col.iter())
-                .map(|(&w, &v)| w * v)
-                .sum();
+            *out_j = weights.iter().zip(col.iter()).map(|(&w, &v)| w * v).sum();
         });
     }
 
@@ -501,7 +508,12 @@ pub fn compute_attention_scores(
     scale: f32,
 ) {
     for i in 0..keys.nrows() {
-        let dot: f32 = keys.row(i).iter().zip(query.iter()).map(|(k, q)| k * q).sum();
+        let dot: f32 = keys
+            .row(i)
+            .iter()
+            .zip(query.iter())
+            .map(|(k, q)| k * q)
+            .sum();
         scores[i] = dot * scale;
     }
 }
@@ -724,7 +736,7 @@ pub fn fast_compute_attention_scores(
 // =============================================================================
 // Runtime-Dispatched Kernel Selection
 // =============================================================================
-// 
+//
 // The dispatch module provides runtime CPU feature detection and automatic
 // selection of the optimal kernel implementation. Use the `dispatch_*` functions
 // for automatic selection, or create a `Dispatcher` for more control.
@@ -742,11 +754,11 @@ pub fn fast_compute_attention_scores(
 // Example:
 // ```ignore
 // use torchless::kernels::{cpu_features, dispatch_matmul_vec};
-// 
+//
 // // Check what features are available
 // let features = cpu_features();
 // println!("CPU features: {}", features.describe());
-// 
+//
 // // Use runtime dispatch for optimal performance
 // let result = dispatch_matmul_vec(&weights, &input);
 // ```
@@ -784,23 +796,23 @@ pub fn print_cpu_features() {
 // Use these in performance-critical code paths after verifying input sizes.
 
 pub use optimized::{
-    // Optimized matrix operations
-    matmul_vec_optimized,
-    weighted_sum_rows_optimized,
-    // Optimized normalization
-    rmsnorm_optimized,
-    softmax_optimized,
-    softmax_view_optimized,
-    // Optimized activations
-    silu_optimized,
-    silu_optimized_into,
+    // Optimized RoPE
+    apply_rope_optimized,
     // Optimized attention
     compute_attention_scores_optimized,
     fused_attention_optimized,
     // Optimized fused operations
     fused_swiglu_optimized,
-    // Optimized RoPE
-    apply_rope_optimized,
+    // Optimized matrix operations
+    matmul_vec_optimized,
+    // Optimized normalization
+    rmsnorm_optimized,
+    // Optimized activations
+    silu_optimized,
+    silu_optimized_into,
+    softmax_optimized,
+    softmax_view_optimized,
+    weighted_sum_rows_optimized,
 };
 
 // =============================================================================
@@ -814,19 +826,27 @@ pub use optimized::{
 
 #[cfg(feature = "parallel")]
 pub use parallel::{
-    // Work Distribution (6.1)
-    WorkDistributionConfig, WorkStealingStats, NumaHint, num_cpus,
-    matmul_vec_adaptive, matmul_vec_adaptive_into,
-    
-    // Pipeline Parallelism (6.2)
-    PipelineState, PipelineConfig,
-    
-    // Tensor Parallelism (6.3)
-    TensorParallelStrategy, TensorParallelConfig,
-    column_parallel_linear, row_parallel_linear,
-    all_reduce_sum, all_reduce_sum_inplace,
-    
+    all_reduce_sum,
+    all_reduce_sum_inplace,
+
     // Parallel Attention and MLP with adaptive work distribution
     attention_parallel_adaptive,
+    column_parallel_linear,
+    matmul_vec_adaptive,
+    matmul_vec_adaptive_into,
+
     mlp_tensor_parallel,
+    num_cpus,
+    row_parallel_linear,
+    NumaHint,
+    PipelineConfig,
+
+    // Pipeline Parallelism (6.2)
+    PipelineState,
+    TensorParallelConfig,
+    // Tensor Parallelism (6.3)
+    TensorParallelStrategy,
+    // Work Distribution (6.1)
+    WorkDistributionConfig,
+    WorkStealingStats,
 };

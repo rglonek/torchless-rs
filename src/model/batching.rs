@@ -95,9 +95,9 @@ impl Sequence {
 
     /// Check if the sequence has finished generating.
     pub fn is_finished(&self) -> bool {
-        self.status == SequenceStatus::Finished ||
-        self.status == SequenceStatus::Cancelled ||
-        self.output_tokens.len() >= self.max_tokens
+        self.status == SequenceStatus::Finished
+            || self.status == SequenceStatus::Cancelled
+            || self.output_tokens.len() >= self.max_tokens
     }
 
     /// Get all tokens (input + output).
@@ -196,10 +196,7 @@ pub struct KVCachePool {
 
 impl KVCachePool {
     /// Create a new KV cache pool.
-    pub fn new(
-        config: &Config,
-        batching_config: &BatchingConfig,
-    ) -> Self {
+    pub fn new(config: &Config, batching_config: &BatchingConfig) -> Self {
         let n_layers = config.n_layers;
         let n_kv_heads = config.n_kv_heads;
         let head_dim = config.hidden_size / config.n_heads;
@@ -258,11 +255,11 @@ impl KVCachePool {
         block_idx: usize,
         layer_idx: usize,
         position_in_block: usize,
-        k_state: &Array2<f32>,  // [n_kv_heads, head_dim]
+        k_state: &Array2<f32>, // [n_kv_heads, head_dim]
         v_state: &Array2<f32>,
     ) {
         let linear_block = block_idx * self.n_layers + layer_idx;
-        
+
         for h in 0..self.n_kv_heads {
             for d in 0..self.head_dim {
                 self.k_blocks[[linear_block, h, position_in_block, d]] = k_state[[h, d]];
@@ -279,17 +276,17 @@ impl KVCachePool {
         position_in_block: usize,
     ) -> (Array2<f32>, Array2<f32>) {
         let linear_block = block_idx * self.n_layers + layer_idx;
-        
+
         let mut k_state = Array2::zeros((self.n_kv_heads, self.head_dim));
         let mut v_state = Array2::zeros((self.n_kv_heads, self.head_dim));
-        
+
         for h in 0..self.n_kv_heads {
             for d in 0..self.head_dim {
                 k_state[[h, d]] = self.k_blocks[[linear_block, h, position_in_block, d]];
                 v_state[[h, d]] = self.v_blocks[[linear_block, h, position_in_block, d]];
             }
         }
-        
+
         (k_state, v_state)
     }
 
@@ -390,9 +387,10 @@ impl BatchScheduler {
 
         let mut seq = Sequence::new(id, input_tokens, max_tokens, temperature);
         seq.priority = priority;
-        
+
         // Insert in priority order
-        let insert_pos = self.pending_queue
+        let insert_pos = self
+            .pending_queue
             .iter()
             .position(|s| s.priority < priority)
             .unwrap_or(self.pending_queue.len());
@@ -438,7 +436,8 @@ impl BatchScheduler {
 
     /// Get the output tokens for a finished sequence.
     pub fn get_output(&self, id: SequenceId) -> Option<&[u32]> {
-        self.finished.iter()
+        self.finished
+            .iter()
             .find(|s| s.id == id)
             .map(|s| s.output_tokens.as_slice())
     }
@@ -460,7 +459,7 @@ impl BatchScheduler {
         while batch.len() < self.config.max_batch_size && !self.pending_queue.is_empty() {
             if let Some(seq) = self.pending_queue.front() {
                 let tokens_needed = seq.input_tokens.len();
-                
+
                 // Check if we have space
                 if batch_tokens + tokens_needed > self.config.max_batch_tokens {
                     break;
@@ -497,7 +496,9 @@ impl BatchScheduler {
     /// Preempt the oldest running sequence to make room.
     fn preempt_one(&mut self) {
         // Find the oldest non-priority sequence
-        let oldest_id = self.running.iter()
+        let oldest_id = self
+            .running
+            .iter()
             .filter(|(_, s)| s.priority <= 0)
             .min_by_key(|(_, s)| s.created_at)
             .map(|(id, _)| *id);
@@ -538,7 +539,9 @@ impl BatchScheduler {
         }
 
         // Move finished sequences
-        let finished_ids: Vec<SequenceId> = self.running.iter()
+        let finished_ids: Vec<SequenceId> = self
+            .running
+            .iter()
             .filter(|(_, s)| s.is_finished())
             .map(|(id, _)| *id)
             .collect();
@@ -613,7 +616,7 @@ impl BatchedInferenceState {
     /// Set up the batch for processing.
     pub fn setup_batch(&mut self, sequences: &[&Sequence]) {
         self.sequence_ids.clear();
-        
+
         for (i, seq) in sequences.iter().enumerate().take(self.max_batch_size) {
             self.positions[i] = seq.position;
             self.temperatures[i] = seq.temperature;
@@ -671,7 +674,10 @@ impl ContinuousBatchingEngine {
     pub fn init(&mut self, model_config: &Config) {
         let max_batch_size = self.scheduler.config.max_batch_size;
         self.scheduler.init_cache(model_config);
-        self.state = Some(BatchedInferenceState::new(model_config.clone(), max_batch_size));
+        self.state = Some(BatchedInferenceState::new(
+            model_config.clone(),
+            max_batch_size,
+        ));
     }
 
     /// Add a request to the engine.
@@ -681,7 +687,8 @@ impl ContinuousBatchingEngine {
         max_tokens: usize,
         temperature: f32,
     ) -> SequenceId {
-        self.scheduler.add_sequence(input_tokens, max_tokens, temperature)
+        self.scheduler
+            .add_sequence(input_tokens, max_tokens, temperature)
     }
 
     /// Add a priority request to the engine.
@@ -692,7 +699,8 @@ impl ContinuousBatchingEngine {
         temperature: f32,
         priority: i32,
     ) -> SequenceId {
-        self.scheduler.add_sequence_with_priority(input_tokens, max_tokens, temperature, priority)
+        self.scheduler
+            .add_sequence_with_priority(input_tokens, max_tokens, temperature, priority)
     }
 
     /// Cancel a request.
@@ -702,7 +710,10 @@ impl ContinuousBatchingEngine {
 
     /// Check if a request is finished.
     pub fn is_finished(&self, id: SequenceId) -> bool {
-        matches!(self.scheduler.get_status(id), Some(SequenceStatus::Finished) | Some(SequenceStatus::Cancelled))
+        matches!(
+            self.scheduler.get_status(id),
+            Some(SequenceStatus::Finished) | Some(SequenceStatus::Cancelled)
+        )
     }
 
     /// Get output tokens for a finished request.
@@ -760,7 +771,7 @@ mod tests {
     #[test]
     fn test_sequence_creation() {
         let seq = Sequence::new(0, vec![1, 2, 3], 10, 0.7);
-        
+
         assert_eq!(seq.id, 0);
         assert_eq!(seq.status, SequenceStatus::Pending);
         assert_eq!(seq.total_length(), 3);
@@ -790,7 +801,7 @@ mod tests {
         scheduler.add_sequence(vec![4, 5], 10, 0.5);
 
         let batch = scheduler.schedule();
-        
+
         assert_eq!(batch.len(), 2);
         assert_eq!(scheduler.running_count(), 2);
         assert_eq!(scheduler.pending_count(), 0);
@@ -807,12 +818,12 @@ mod tests {
 
         // Process some outputs
         scheduler.process_outputs(vec![(id, 100)], 0);
-        
+
         assert_eq!(scheduler.stats().tokens_generated, 1);
 
         // Process EOS
         scheduler.process_outputs(vec![(id, 0)], 0);
-        
+
         assert_eq!(scheduler.finished_count(), 1);
         assert_eq!(scheduler.running_count(), 0);
     }
@@ -835,7 +846,7 @@ mod tests {
     fn test_kv_cache_pool() {
         let model_config = make_test_config();
         let batching_config = BatchingConfig::default();
-        
+
         let mut pool = KVCachePool::new(&model_config, &batching_config);
 
         // Test allocation
@@ -881,11 +892,11 @@ mod tests {
     #[test]
     fn test_batching_stats() {
         let mut stats = BatchingStats::default();
-        
+
         stats.update_avg_batch_size(4);
         stats.iterations = 1;
         assert!((stats.avg_batch_size - 4.0).abs() < 1e-6);
-        
+
         stats.update_avg_batch_size(8);
         assert!((stats.avg_batch_size - 6.0).abs() < 1e-6);
     }

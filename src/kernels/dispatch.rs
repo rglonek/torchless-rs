@@ -569,9 +569,7 @@ mod tests {
 
         // At least one of these should be true on modern hardware
         // (or scalar on very old/exotic hardware)
-        assert!(
-            features.avx512f || features.avx2 || features.neon || desc == "scalar only"
-        );
+        assert!(features.avx512f || features.avx2 || features.neon || desc == "scalar only");
     }
 
     #[test]

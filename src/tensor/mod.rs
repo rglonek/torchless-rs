@@ -4,9 +4,8 @@ pub mod storage;
 
 // Re-export storage types
 pub use storage::{
-    Device, Dtype, TensorStorage, UnifiedTensor, DeviceTransfer,
-    CpuF32Storage, CpuF16Storage, CpuBF16Storage, CpuInt8Storage, CpuInt4Storage,
-    MixedPrecisionConfig, ModelSizeParams,
+    CpuBF16Storage, CpuF16Storage, CpuF32Storage, CpuInt4Storage, CpuInt8Storage, Device,
+    DeviceTransfer, Dtype, MixedPrecisionConfig, ModelSizeParams, TensorStorage, UnifiedTensor,
 };
 
 // Original ndarray type aliases for backward compatibility

@@ -1,27 +1,33 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod formats;
 mod parameters;
 pub mod quantization;
-pub mod formats;
 #[cfg(test)]
 mod tests;
 
 pub use parameters::{Parameters, TensorDtype, TensorView};
 pub use quantization::{
-    QuantFormat, QuantizedTensor, 
-    Q4_0Block, Q8_0Block, Q4KMBlock, Q4KSBlock,
-    QK4_0, QK8_0, QK_K,
+    Q4KMBlock, Q4KSBlock, Q4_0Block, Q8_0Block, QuantFormat, QuantizedTensor, QK4_0, QK8_0, QK_K,
 };
 
 // Phase 7: Format Support
 pub use formats::{
-    // Format detection and auto-loading
-    ModelFormat, detect_format, load_model_auto, UnifiedModelData, UnifiedConfig,
+    detect_format,
+    load_model_auto,
+    GGMLType,
     // GGUF format
-    GGUFLoader, GGUFMetadata, GGUFTensorInfo, GGMLType,
+    GGUFLoader,
+    GGUFMetadata,
+    GGUFTensorInfo,
+    // Format detection and auto-loading
+    ModelFormat,
     // Safetensors format
-    SafetensorsLoader, SafetensorsTensorInfo,
+    SafetensorsLoader,
+    SafetensorsTensorInfo,
+    UnifiedConfig,
+    UnifiedModelData,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

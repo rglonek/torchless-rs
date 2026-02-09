@@ -25,9 +25,9 @@
 
 use crate::kernels;
 use crate::loader::{Config, Parameters};
-use crate::model::{InferenceState, Embedding, Attention};
+use crate::model::architecture::{ActivationType, ArchitectureConfig, Model, ModelArchitecture};
 use crate::model::LazyEmbedding;
-use crate::model::architecture::{Model, ModelArchitecture, ArchitectureConfig, ActivationType};
+use crate::model::{Attention, Embedding, InferenceState};
 use anyhow::Result;
 use ndarray::{Array1, Array2};
 
@@ -57,7 +57,8 @@ impl LayerNorm {
         // Normalize
         let std_inv = 1.0 / (variance + self.eps).sqrt();
         for i in 0..x.len() {
-            state.hidden_state[i] = (state.hidden_state[i] - mean) * std_inv * self.weight[i] + self.bias[i];
+            state.hidden_state[i] =
+                (state.hidden_state[i] - mean) * std_inv * self.weight[i] + self.bias[i];
         }
     }
 
@@ -109,7 +110,9 @@ impl PhiMLP {
         }
 
         // Down projection
-        state.hidden_state.assign(&kernels::matmul_vec(&self.down_proj, &intermediate));
+        state
+            .hidden_state
+            .assign(&kernels::matmul_vec(&self.down_proj, &intermediate));
     }
 
     /// Optimized forward pass
@@ -126,7 +129,9 @@ impl PhiMLP {
         }
 
         // Down projection
-        state.hidden_state.assign(&kernels::fast_matmul_vec(&self.down_proj, &intermediate));
+        state
+            .hidden_state
+            .assign(&kernels::fast_matmul_vec(&self.down_proj, &intermediate));
     }
 }
 
@@ -244,7 +249,8 @@ impl Phi {
         // Load final norm (LayerNorm with bias)
         eprintln!("Loading Phi final norm...");
         let norm_weight = params.get_tensor(final_norm_weight)?;
-        let norm_bias = params.get_tensor(final_norm_bias)
+        let norm_bias = params
+            .get_tensor(final_norm_bias)
             .unwrap_or_else(|_| vec![0.0; norm_weight.len()]); // Default to zeros if no bias
         let final_norm = LayerNorm::new(
             Array1::from_vec(norm_weight),
@@ -284,7 +290,8 @@ impl Phi {
 
         // Load input layernorm (with bias)
         let input_norm_weight = params.get_tensor(&format!("{}.input_layernorm.weight", prefix))?;
-        let input_norm_bias = params.get_tensor(&format!("{}.input_layernorm.bias", prefix))
+        let input_norm_bias = params
+            .get_tensor(&format!("{}.input_layernorm.bias", prefix))
             .unwrap_or_else(|_| vec![0.0; input_norm_weight.len()]);
         let input_layernorm = LayerNorm::new(
             Array1::from_vec(input_norm_weight),
@@ -296,7 +303,7 @@ impl Phi {
         let q_proj = Self::load_weight(params, &format!("{}.self_attn.q_proj.weight", prefix))?;
         let k_proj = Self::load_weight(params, &format!("{}.self_attn.k_proj.weight", prefix))?;
         let v_proj = Self::load_weight(params, &format!("{}.self_attn.v_proj.weight", prefix))?;
-        
+
         // Phi uses "dense" for output projection
         let o_proj_name = format!("{}.self_attn.dense.weight", prefix);
         let o_proj = if params.get_tensor_shape(&o_proj_name).is_some() {
@@ -357,7 +364,9 @@ impl Phi {
         self.final_norm.forward(state);
 
         // LM head projection
-        state.logits.assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
+        state
+            .logits
+            .assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
     }
 
     /// Optimized forward pass
@@ -374,7 +383,10 @@ impl Phi {
         self.final_norm.fast_forward(state);
 
         // LM head projection (parallel when available)
-        state.logits.assign(&kernels::fast_matmul_vec(&self.lm_head, &state.hidden_state));
+        state.logits.assign(&kernels::fast_matmul_vec(
+            &self.lm_head,
+            &state.hidden_state,
+        ));
     }
 }
 
@@ -431,9 +443,10 @@ impl<'a> LazyPhi<'a> {
         // Load final norm eagerly (small tensor)
         let final_norm_weight = "model.final_layernorm.weight";
         let final_norm_bias = "model.final_layernorm.bias";
-        
+
         let norm_weight = params.get_tensor(final_norm_weight)?;
-        let norm_bias = params.get_tensor(final_norm_bias)
+        let norm_bias = params
+            .get_tensor(final_norm_bias)
             .unwrap_or_else(|_| vec![0.0; norm_weight.len()]);
         let final_norm = LayerNorm::new(
             Array1::from_vec(norm_weight),
@@ -449,7 +462,8 @@ impl<'a> LazyPhi<'a> {
         for i in 0..config.n_layers {
             let prefix = format!("model.layers.{}", i);
             let norm_weight = params.get_tensor(&format!("{}.input_layernorm.weight", prefix))?;
-            let norm_bias = params.get_tensor(&format!("{}.input_layernorm.bias", prefix))
+            let norm_bias = params
+                .get_tensor(&format!("{}.input_layernorm.bias", prefix))
                 .unwrap_or_else(|_| vec![0.0; norm_weight.len()]);
             let input_layernorm = LayerNorm::new(
                 Array1::from_vec(norm_weight),
@@ -513,10 +527,19 @@ impl<'a> LazyPhi<'a> {
         let normed = state.hidden_state.clone();
 
         // Attention (lazy)
-        let q_view = self.params.get_tensor_view(&format!("{}.self_attn.q_proj.weight", prefix)).unwrap();
-        let k_view = self.params.get_tensor_view(&format!("{}.self_attn.k_proj.weight", prefix)).unwrap();
-        let v_view = self.params.get_tensor_view(&format!("{}.self_attn.v_proj.weight", prefix)).unwrap();
-        
+        let q_view = self
+            .params
+            .get_tensor_view(&format!("{}.self_attn.q_proj.weight", prefix))
+            .unwrap();
+        let k_view = self
+            .params
+            .get_tensor_view(&format!("{}.self_attn.k_proj.weight", prefix))
+            .unwrap();
+        let v_view = self
+            .params
+            .get_tensor_view(&format!("{}.self_attn.v_proj.weight", prefix))
+            .unwrap();
+
         let hidden_slice = state.hidden_state.as_slice().unwrap();
         let q = q_view.matmul_vec(hidden_slice);
         let k = k_view.matmul_vec(hidden_slice);
@@ -524,35 +547,48 @@ impl<'a> LazyPhi<'a> {
 
         // Store Q/K/V (simplified attention for lazy mode)
         for (i, &val) in q.iter().enumerate() {
-            if i < state.q_flat.len() { state.q_flat[i] = val; }
+            if i < state.q_flat.len() {
+                state.q_flat[i] = val;
+            }
         }
         for (i, &val) in k.iter().enumerate() {
-            if i < state.k_flat.len() { state.k_flat[i] = val; }
+            if i < state.k_flat.len() {
+                state.k_flat[i] = val;
+            }
         }
         for (i, &val) in v.iter().enumerate() {
-            if i < state.v_flat.len() { state.v_flat[i] = val; }
+            if i < state.v_flat.len() {
+                state.v_flat[i] = val;
+            }
         }
 
         // Compute attention (simplified for demo)
         // Full implementation would use the attention module
         let o_name = format!("{}.self_attn.dense.weight", prefix);
-        let o_view = self.params.get_tensor_view(&o_name)
-            .or_else(|_| self.params.get_tensor_view(&format!("{}.self_attn.o_proj.weight", prefix)))
+        let o_view = self
+            .params
+            .get_tensor_view(&o_name)
+            .or_else(|_| {
+                self.params
+                    .get_tensor_view(&format!("{}.self_attn.o_proj.weight", prefix))
+            })
             .unwrap();
-        
+
         // For now, use simplified attention output
-        state.hidden_state.assign(&Array1::from_vec(o_view.matmul_vec(&q)));
+        state
+            .hidden_state
+            .assign(&Array1::from_vec(o_view.matmul_vec(&q)));
         let attn_output = state.hidden_state.clone();
 
         // MLP branch (lazy)
         state.hidden_state.assign(&normed);
-        
+
         let gate_up_name = format!("{}.mlp.gate_up_proj.weight", prefix);
         if let Ok(gate_up_view) = self.params.get_tensor_view(&gate_up_name) {
             let hidden_slice = state.hidden_state.as_slice().unwrap();
             let fused = gate_up_view.matmul_vec(hidden_slice);
             let intermediate_size = fused.len() / 2;
-            
+
             let mut intermediate = vec![0.0f32; intermediate_size];
             for i in 0..intermediate_size {
                 let gate = PhiMLP::gelu_tanh(fused[i]);
@@ -560,7 +596,10 @@ impl<'a> LazyPhi<'a> {
                 intermediate[i] = gate * up;
             }
 
-            let down_view = self.params.get_tensor_view(&format!("{}.mlp.down_proj.weight", prefix)).unwrap();
+            let down_view = self
+                .params
+                .get_tensor_view(&format!("{}.mlp.down_proj.weight", prefix))
+                .unwrap();
             let mlp_out = down_view.matmul_vec(&intermediate);
             state.hidden_state.assign(&Array1::from_vec(mlp_out));
         }

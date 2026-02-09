@@ -208,12 +208,9 @@ mod hip_ffi {
         pub fn hipStreamDestroy(stream: *mut c_void) -> c_int;
         pub fn hipStreamSynchronize(stream: *mut c_void) -> c_int;
         pub fn hipMemset(ptr: *mut c_void, value: c_int, count: usize) -> c_int;
-        pub fn hipGetDeviceProperties(
-            prop: *mut HipDeviceProperties,
-            device: c_int,
-        ) -> c_int;
+        pub fn hipGetDeviceProperties(prop: *mut HipDeviceProperties, device: c_int) -> c_int;
     }
-    
+
     #[repr(C)]
     pub struct HipDeviceProperties {
         pub name: [i8; 256],
@@ -245,9 +242,9 @@ mod hip_ffi {
 #[allow(dead_code)]
 mod rocblas_ffi {
     use std::os::raw::{c_int, c_void};
-    
+
     pub type RocblasHandle = *mut c_void;
-    
+
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
     pub enum RocblasOperation {
@@ -255,13 +252,13 @@ mod rocblas_ffi {
         Transpose = 112,
         ConjugateTranspose = 113,
     }
-    
+
     #[link(name = "rocblas")]
     extern "C" {
         pub fn rocblas_create_handle(handle: *mut RocblasHandle) -> c_int;
         pub fn rocblas_destroy_handle(handle: RocblasHandle) -> c_int;
         pub fn rocblas_set_stream(handle: RocblasHandle, stream: *mut c_void) -> c_int;
-        
+
         pub fn rocblas_sgemv(
             handle: RocblasHandle,
             trans: RocblasOperation,
@@ -276,7 +273,7 @@ mod rocblas_ffi {
             y: *mut f32,
             incy: c_int,
         ) -> c_int;
-        
+
         pub fn rocblas_sgemm(
             handle: RocblasHandle,
             transA: RocblasOperation,
@@ -732,20 +729,18 @@ impl KernelBackend for RocmBackend {
         let (rows, cols) = w.dim();
 
         // Transfer to GPU
-        let w_gpu = self.to_device_2d(w).expect("Failed to transfer weights to GPU");
-        let x_gpu = self.to_device_1d(x).expect("Failed to transfer input to GPU");
+        let w_gpu = self
+            .to_device_2d(w)
+            .expect("Failed to transfer weights to GPU");
+        let x_gpu = self
+            .to_device_1d(x)
+            .expect("Failed to transfer input to GPU");
         let y_gpu = self.alloc_zeros(rows).expect("Failed to allocate output");
         let mut y_tensor = RocmTensor::new_1d(y_gpu, rows);
 
         // Perform matmul
-        self.rocblas_gemv(
-            w_gpu.data(),
-            x_gpu.data(),
-            y_tensor.data_mut(),
-            rows,
-            cols,
-        )
-        .expect("rocBLAS GEMV failed");
+        self.rocblas_gemv(w_gpu.data(), x_gpu.data(), y_tensor.data_mut(), rows, cols)
+            .expect("rocBLAS GEMV failed");
 
         // Transfer back
         self.to_host_1d(&y_tensor)

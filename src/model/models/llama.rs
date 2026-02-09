@@ -25,9 +25,11 @@
 
 use crate::kernels;
 use crate::loader::{Config, Parameters};
-use crate::model::{InferenceState, Layer, Embedding, RMSNorm, Attention, MLP};
-use crate::model::{LazyLayer, LazyEmbedding, LazyAttention, LazyMLP};
-use crate::model::architecture::{Model, ModelArchitecture, TensorNamePattern, RopeScaling, ArchitectureConfig};
+use crate::model::architecture::{
+    ArchitectureConfig, Model, ModelArchitecture, RopeScaling, TensorNamePattern,
+};
+use crate::model::{Attention, Embedding, InferenceState, Layer, RMSNorm, MLP};
+use crate::model::{LazyAttention, LazyEmbedding, LazyLayer, LazyMLP};
 use anyhow::Result;
 use ndarray::{Array1, Array2};
 
@@ -48,7 +50,7 @@ impl LLaMA {
         let config = params.config.clone();
         let tokenizer = params.tokenizer.clone();
         let tensor_names = TensorNamePattern::llama();
-        
+
         // Determine LLaMA version for appropriate RoPE scaling
         let arch_config = Self::detect_llama_version(&config, &params);
 
@@ -99,7 +101,7 @@ impl LLaMA {
         // - Vocabulary size around 128k
         // - RoPE theta of 500000 (vs 10000 for LLaMA 1/2)
         let is_llama3 = config.rope_theta > 100000.0 || config.vocab_size > 100000;
-        
+
         if is_llama3 {
             eprintln!("Detected LLaMA 3 architecture");
             ArchitectureConfig::llama3(config.max_position_embeddings)
@@ -109,13 +111,20 @@ impl LLaMA {
         }
     }
 
-    fn load_layer(params: &Parameters, layer_idx: usize, config: &Config, tensor_names: &TensorNamePattern) -> Result<Layer> {
+    fn load_layer(
+        params: &Parameters,
+        layer_idx: usize,
+        config: &Config,
+        tensor_names: &TensorNamePattern,
+    ) -> Result<Layer> {
         // Load norms
         let input_norm_data = params.get_tensor(&tensor_names.input_layernorm_name(layer_idx))?;
         let input_layernorm = RMSNorm::new(Array1::from_vec(input_norm_data), config.norm_eps);
 
-        let post_attn_norm_data = params.get_tensor(&tensor_names.post_attention_layernorm_name(layer_idx))?;
-        let post_attention_layernorm = RMSNorm::new(Array1::from_vec(post_attn_norm_data), config.norm_eps);
+        let post_attn_norm_data =
+            params.get_tensor(&tensor_names.post_attention_layernorm_name(layer_idx))?;
+        let post_attention_layernorm =
+            RMSNorm::new(Array1::from_vec(post_attn_norm_data), config.norm_eps);
 
         // Load attention projections
         let q_proj = Self::load_weight(params, &tensor_names.q_proj_name(layer_idx))?;
@@ -149,11 +158,9 @@ impl LLaMA {
     /// Compute scaled RoPE frequencies for extended context
     fn compute_scaled_rope_freqs(&self, head_dim: usize, pos: usize) -> (Array1<f32>, Array1<f32>) {
         let base_freq = kernels::init_rope_freqs(head_dim, self.config.rope_theta);
-        
+
         match self.arch_config.rope_scaling {
-            RopeScaling::None => {
-                kernels::rope_embeddings(&base_freq, pos)
-            }
+            RopeScaling::None => kernels::rope_embeddings(&base_freq, pos),
             RopeScaling::Linear { factor } => {
                 // Linear scaling: divide position by factor
                 let scaled_pos = (pos as f32) / factor;
@@ -168,20 +175,27 @@ impl LLaMA {
                 }
                 (cos, sin)
             }
-            RopeScaling::DynamicNTK { factor, original_max_position } => {
+            RopeScaling::DynamicNTK {
+                factor,
+                original_max_position,
+            } => {
                 // Dynamic NTK scaling (used in extended context models)
                 let seq_len = pos + 1;
                 if seq_len <= original_max_position {
                     kernels::rope_embeddings(&base_freq, pos)
                 } else {
                     // Scale the base frequency
-                    let scale = (factor * (seq_len as f32) / (original_max_position as f32)).powf(head_dim as f32 / (head_dim as f32 - 2.0));
+                    let scale = (factor * (seq_len as f32) / (original_max_position as f32))
+                        .powf(head_dim as f32 / (head_dim as f32 - 2.0));
                     let scaled_theta = self.config.rope_theta * scale;
                     let scaled_freq = kernels::init_rope_freqs(head_dim, scaled_theta);
                     kernels::rope_embeddings(&scaled_freq, pos)
                 }
             }
-            RopeScaling::YaRN { factor, original_max_position } => {
+            RopeScaling::YaRN {
+                factor,
+                original_max_position,
+            } => {
                 // YaRN scaling (Yet another RoPE extensioN)
                 // Simplified implementation - full YaRN has more complex interpolation
                 let seq_len = pos + 1;
@@ -219,7 +233,9 @@ impl LLaMA {
         self.norm.forward(state);
 
         // LM head projection
-        state.logits.assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
+        state
+            .logits
+            .assign(&kernels::matmul_vec(&self.lm_head, &state.hidden_state));
     }
 
     /// Optimized forward pass
@@ -236,7 +252,10 @@ impl LLaMA {
         self.norm.fast_forward(state);
 
         // LM head projection (parallel when available)
-        state.logits.assign(&kernels::fast_matmul_vec(&self.lm_head, &state.hidden_state));
+        state.logits.assign(&kernels::fast_matmul_vec(
+            &self.lm_head,
+            &state.hidden_state,
+        ));
     }
 }
 
@@ -311,13 +330,20 @@ impl<'a> LazyLLaMA<'a> {
         })
     }
 
-    fn create_lazy_layer(params: &Parameters, layer_idx: usize, config: &Config, tensor_names: &TensorNamePattern) -> Result<LazyLayer> {
+    fn create_lazy_layer(
+        params: &Parameters,
+        layer_idx: usize,
+        config: &Config,
+        tensor_names: &TensorNamePattern,
+    ) -> Result<LazyLayer> {
         // Load norms eagerly
         let input_norm_data = params.get_tensor(&tensor_names.input_layernorm_name(layer_idx))?;
         let input_layernorm = RMSNorm::new(Array1::from_vec(input_norm_data), config.norm_eps);
 
-        let post_attn_norm_data = params.get_tensor(&tensor_names.post_attention_layernorm_name(layer_idx))?;
-        let post_attention_layernorm = RMSNorm::new(Array1::from_vec(post_attn_norm_data), config.norm_eps);
+        let post_attn_norm_data =
+            params.get_tensor(&tensor_names.post_attention_layernorm_name(layer_idx))?;
+        let post_attention_layernorm =
+            RMSNorm::new(Array1::from_vec(post_attn_norm_data), config.norm_eps);
 
         // Create lazy attention
         let self_attn = LazyAttention::new(
@@ -428,7 +454,10 @@ mod tests {
     fn test_llama3_rope_scaling() {
         let arch = ArchitectureConfig::llama3(4096);
         match arch.rope_scaling {
-            RopeScaling::DynamicNTK { factor, original_max_position } => {
+            RopeScaling::DynamicNTK {
+                factor,
+                original_max_position,
+            } => {
                 assert_eq!(factor, 8.0);
                 assert_eq!(original_max_position, 4096);
             }

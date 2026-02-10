@@ -76,8 +76,8 @@ pub(crate) fn run_socket_server(
     // Detect architecture and select the correct chat template
     let tensor_names: Vec<String> = params.tensors.keys().cloned().collect();
     let architecture = detect_architecture_from_tensors(&tensor_names);
-    let chat_template = ChatTemplate::for_architecture(architecture)
-        .unwrap_or(ChatTemplate::Mistral);
+    let chat_template =
+        ChatTemplate::for_architecture(architecture).unwrap_or(ChatTemplate::Mistral);
     eprintln!(
         "[server] Detected architecture: {} (chat template: {:?})",
         architecture, chat_template

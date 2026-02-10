@@ -1147,6 +1147,11 @@ impl GGUFLoader {
 
         let mut tokenizer = Tokenizer::new(vocab, merges);
 
+        // Read tokenizer model type (e.g. "llama", "gpt2") and configure byte encoding
+        if let Some(GGUFValue::String(model)) = self.metadata.kv.get("tokenizer.ggml.model") {
+            tokenizer.set_tokenizer_model(model);
+        }
+
         // Read explicit EOS token ID from GGUF metadata if available
         if let Some(eos_val) = self.metadata.kv.get("tokenizer.ggml.eos_token_id") {
             if let Some(eos_id) = eos_val.as_u32() {

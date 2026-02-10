@@ -106,8 +106,10 @@ impl Tokenizer {
             }
         }
 
-        // Auto-detect byte encoding style from the vocabulary
-        let byte_encoding = Self::detect_byte_encoding(&vocab);
+        // Byte encoding is set to None by default; the GGUF loader calls
+        // set_tokenizer_model() after construction to configure it from metadata.
+        // If no model hint is provided, auto-detect from the vocabulary.
+        let byte_encoding = Self::detect_byte_encoding(&vocab, None);
 
         Self {
             token_to_id: vocab,
@@ -119,27 +121,59 @@ impl Tokenizer {
         }
     }
 
+    /// Set the tokenizer model type (e.g. from `tokenizer.ggml.model` in GGUF metadata).
+    ///
+    /// This re-runs byte encoding detection with the model hint, which allows
+    /// the explicit `"gpt2"` signal to take effect. For other model types (e.g.
+    /// `"llama"`), the heuristic fallback still runs.
+    pub fn set_tokenizer_model(&mut self, model: &str) {
+        self.byte_encoding = Self::detect_byte_encoding(&self.token_to_id, Some(model));
+    }
+
     /// Detect the byte encoding style of the vocabulary.
     ///
-    /// - If `<0x41>` is present → SentencePiece hex-fallback
-    /// - If any token contains GPT-2 shifted characters (U+0100–U+0143) → GPT-2
-    /// - Otherwise → no special byte encoding
-    fn detect_byte_encoding(vocab: &HashMap<String, u32>) -> ByteEncoding {
-        // Check for SentencePiece hex fallback: <0x41> is byte 0x41 = 'A'
+    /// Detection priority:
+    /// 1. Explicit `"gpt2"` model hint → GPT-2 mode
+    /// 2. Vocab contains `<0x41>` → SentencePiece hex-fallback
+    /// 3. Heuristic: count Ġ-prefixed (U+0120) multi-char tokens. In GPT-2
+    ///    vocabularies Ġ represents the space byte, so there are thousands of
+    ///    Ġ-prefixed word tokens (e.g. "Ġthe", "Ġa"). A non-GPT-2 vocab has
+    ///    at most a handful of Maltese words starting with Ġ.
+    /// 4. Otherwise → no byte encoding
+    fn detect_byte_encoding(
+        vocab: &HashMap<String, u32>,
+        model_hint: Option<&str>,
+    ) -> ByteEncoding {
+        // 1. Explicit model hint
+        if let Some(model) = model_hint {
+            if model == "gpt2" {
+                return ByteEncoding::Gpt2 {
+                    unicode_to_byte: build_gpt2_unicode_to_byte(),
+                };
+            }
+        }
+
+        // 2. SentencePiece hex-fallback: <0x41> is byte 0x41 = 'A'
         if vocab.contains_key("<0x41>") {
             return ByteEncoding::HexFallback;
         }
 
-        // Check for GPT-2 encoding by looking for characters in the shifted range
-        // (U+0100–U+0143). These only appear in GPT-2-style byte-encoded vocabularies.
-        for token_str in vocab.keys() {
-            for ch in token_str.chars() {
-                if ('\u{0100}'..='\u{0143}').contains(&ch) {
-                    return ByteEncoding::Gpt2 {
-                        unicode_to_byte: build_gpt2_unicode_to_byte(),
-                    };
-                }
-            }
+        // 3. GPT-2 heuristic: Ġ (U+0120) = space byte in GPT-2 encoding.
+        //    GPT-2 vocabs have 1000+ multi-char tokens prefixed with Ġ (representing
+        //    space-prefixed words like " the", " a", " is").
+        //    A non-GPT-2 multilingual vocab has at most a handful of Maltese words
+        //    starting with this character, so a threshold of 100 is extremely safe.
+        let gpt2_space_char = '\u{0120}';
+        let gpt2_space_len = gpt2_space_char.len_utf8();
+        let space_prefixed_count = vocab
+            .keys()
+            .filter(|k| k.starts_with(gpt2_space_char) && k.len() > gpt2_space_len)
+            .count();
+
+        if space_prefixed_count > 100 {
+            return ByteEncoding::Gpt2 {
+                unicode_to_byte: build_gpt2_unicode_to_byte(),
+            };
         }
 
         ByteEncoding::None

@@ -8,8 +8,8 @@ use torchless::{
     expand_file_references, format_edit_diff, generate, generate_lazy, generate_lazy_until_eos,
     generate_until_eos, init_backend, parse_edit_blocks, print_backend_summary, strip_thinking,
     BackendPreference, ChatMessage, ChatRole, ChatTemplate, GenerationResult, InferenceState,
-    KVDtype, LazyMistral, Mistral, Parameters, PendingEdit, SamplingConfig,
-    SelfSpeculativeDecoder, SpeculativeConfig, ThinkingState,
+    KVDtype, LazyMistral, Mistral, Parameters, PendingEdit, SamplingConfig, SelfSpeculativeDecoder,
+    SpeculativeConfig, ThinkingState,
 };
 
 #[cfg(unix)]
@@ -760,9 +760,12 @@ fn run_chat(
     // Detect architecture and select the correct chat template
     let tensor_names: Vec<String> = params.tensors.keys().cloned().collect();
     let architecture = detect_architecture_from_tensors(&tensor_names);
-    let chat_template = ChatTemplate::for_architecture(architecture)
-        .unwrap_or(ChatTemplate::Mistral);
-    eprintln!("Detected architecture: {} (chat template: {:?})", architecture, chat_template);
+    let chat_template =
+        ChatTemplate::for_architecture(architecture).unwrap_or(ChatTemplate::Mistral);
+    eprintln!(
+        "Detected architecture: {} (chat template: {:?})",
+        architecture, chat_template
+    );
 
     if lazy {
         // Lazy loading: memory-efficient

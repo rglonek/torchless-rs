@@ -136,32 +136,85 @@ fn test_incremental_decoder_mixed() {
     assert_eq!(dec.flush(), "");
 }
 
-/// Test that GPT-2 byte encoding is detected and handled correctly.
+/// Test that GPT-2 byte encoding is activated via set_tokenizer_model and decodes correctly.
 #[test]
-fn test_gpt2_byte_encoding_detection() {
+fn test_gpt2_byte_encoding_via_model_hint() {
     use super::build_gpt2_byte_to_unicode;
 
     let table = build_gpt2_byte_to_unicode();
     let mut vocab = HashMap::new();
 
-    // Build a vocab using GPT-2 byte encoding
+    // Build a vocab using GPT-2 byte encoding (256 single-char byte tokens)
     for (byte_val, &ch) in table.iter().enumerate() {
         vocab.insert(ch.to_string(), byte_val as u32);
     }
-    // Add a multi-char token: "Hello" using GPT-2 chars (all ASCII identity range)
     vocab.insert("Hello".to_string(), 256);
 
-    let tokenizer = Tokenizer::new(vocab, vec![]);
+    let mut tokenizer = Tokenizer::new(vocab, vec![]);
+    tokenizer.set_tokenizer_model("gpt2");
 
-    // Decode Cyrillic "ем" = bytes [0xD0, 0xB5, 0xD0, 0xBC]
-    // In GPT-2: byte 0xD0 → U+00D0 (Ð), byte 0xB5 → U+00B5 (µ),
-    //           byte 0xBC → U+00BC (¼)
-    let d0 = 0xD0u32; // token for byte 0xD0
-    let b5 = 0xB5u32; // token for byte 0xB5
-    let bc = 0xBCu32; // token for byte 0xBC
+    let d0 = 0xD0u32;
+    let b5 = 0xB5u32;
+    let bc = 0xBCu32;
 
     let decoded = tokenizer.decode(&[d0, b5, d0, bc]);
     assert_eq!(decoded, "ем"); // Cyrillic "em"
+}
+
+/// Test the Ġ-prefix heuristic: a GPT-2-style vocab with hundreds of Ġ-prefixed
+/// tokens is auto-detected even without an explicit model hint.
+#[test]
+fn test_gpt2_autodetect_heuristic() {
+    use super::build_gpt2_byte_to_unicode;
+
+    let table = build_gpt2_byte_to_unicode();
+    let mut vocab = HashMap::new();
+
+    // Build the 256 single-char byte tokens
+    for (byte_val, &ch) in table.iter().enumerate() {
+        vocab.insert(ch.to_string(), byte_val as u32);
+    }
+
+    // Add 200+ Ġ-prefixed word tokens to trigger the heuristic
+    // (Ġ = U+0120 = GPT-2 encoding of byte 0x20 = space)
+    let words = [
+        "the", "a", "is", "of", "and", "to", "in", "that", "it", "for", "was", "on", "are", "be",
+        "with", "as", "at", "this", "have", "from", "or", "an", "by", "not", "but", "what", "all",
+        "were", "we", "when", "your", "can", "said", "there", "each", "which", "she", "do", "how",
+        "their", "if", "will", "up", "about", "out", "them", "then", "so", "no", "other", "would",
+        "time", "very", "make", "like", "just", "know", "take", "people", "into", "year", "some",
+        "could", "over", "come", "its", "after", "use", "two", "way", "than", "first", "who",
+        "may", "new", "been", "now", "any", "find", "long", "day", "did", "get", "has", "him",
+        "his", "look", "more", "only", "see", "my", "they", "one", "had", "her", "most", "old",
+        "also", "back", "made", "well", "where", "go", "such", "should", "still", "great",
+        "before", "never", "must", "through", "last", "world",
+    ];
+    for (i, word) in words.iter().enumerate() {
+        vocab.insert(format!("\u{0120}{}", word), 256 + i as u32);
+    }
+
+    // Should auto-detect GPT-2 from the Ġ-prefixed tokens alone
+    let tokenizer = Tokenizer::new(vocab, vec![]);
+
+    let d0 = 0xD0u32;
+    let b5 = 0xB5u32;
+    let decoded = tokenizer.decode(&[d0, b5]);
+    assert_eq!(decoded, "е"); // Cyrillic "ie" — GPT-2 decoding applied
+}
+
+/// Test that a non-GPT-2 model with a few Latin Extended-A chars doesn't
+/// falsely trigger GPT-2 mode (small vocab, no mass Ġ-prefixed tokens).
+#[test]
+fn test_no_false_gpt2_detection() {
+    let mut vocab = HashMap::new();
+    vocab.insert("<s>".to_string(), 0);
+    vocab.insert("Ĥ".to_string(), 1); // U+0124 — Latin Extended-A
+    vocab.insert("ello".to_string(), 2);
+
+    let tokenizer = Tokenizer::new(vocab, vec![]);
+    // Should NOT have GPT-2 encoding — just plain UTF-8
+    let decoded = tokenizer.decode(&[1, 2]);
+    assert_eq!(decoded, "Ĥello"); // Direct UTF-8, no byte remapping
 }
 
 // Integration tests with actual vocab - to be added when fixtures are available

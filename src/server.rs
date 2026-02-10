@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use torchless::{
-    detect_architecture_from_tensors, display_thinking_token_to, generate_lazy_until_eos,
+    detect_architecture_from_tensors, display_thinking_text_to, generate_lazy_until_eos,
     generate_until_eos, init_backend, BackendPreference, ChatTemplate, InferenceState, KVDtype,
     LazyMistral, Mistral, Parameters, SamplingConfig, ThinkingState,
 };
@@ -300,16 +300,17 @@ fn handle_connection_lazy(
                 if dbg && (i % 50 == 0) {
                     eprintln!("Processing prompt token {}/{}", i + 1, tokens.len());
                 }
-                model.forward(state, token, dbg);
+                model.fast_forward(state, token, dbg);
                 state.pos += 1;
             }
         },
         &mut |state, first_token, eos_ids, config, output| {
             let _guard = lock.lock().unwrap();
             let dbg = config.debug;
+            let mut inc_decoder = model.tokenizer.incremental_decoder();
             if config.speculative {
                 generate_speculative_until_eos(
-                    |s, t| model.forward(s, t, dbg),
+                    |s, t| model.fast_forward(s, t, dbg),
                     &model.tokenizer,
                     state,
                     first_token,
@@ -330,10 +331,9 @@ fn handle_connection_lazy(
                     eos_ids,
                     dbg,
                     |token_id| {
+                        let text = inc_decoder.push(token_id);
                         let action = thinking_state.process_token(token_id);
-                        display_thinking_token_to(output, action, || {
-                            model.tokenizer.decode(&[token_id])
-                        });
+                        display_thinking_text_to(output, action, &text);
                         let _ = output.flush();
                     },
                 )
@@ -403,16 +403,17 @@ fn handle_connection_eager(
                 if dbg && (i % 50 == 0) {
                     eprintln!("Processing prompt token {}/{}", i + 1, tokens.len());
                 }
-                model_ref.forward(state, token, dbg);
+                model_ref.fast_forward(state, token, dbg);
                 state.pos += 1;
             }
         },
         &mut |state, first_token, eos_ids, config, output| {
             let _guard = lock.lock().unwrap();
             let dbg = config.debug;
+            let mut inc_decoder = model_ref.tokenizer.incremental_decoder();
             if config.speculative {
                 generate_speculative_until_eos(
-                    |s, t| model_ref.forward(s, t, dbg),
+                    |s, t| model_ref.fast_forward(s, t, dbg),
                     &model_ref.tokenizer,
                     state,
                     first_token,
@@ -433,10 +434,9 @@ fn handle_connection_eager(
                     eos_ids,
                     dbg,
                     |token_id| {
+                        let text = inc_decoder.push(token_id);
                         let action = thinking_state.process_token(token_id);
-                        display_thinking_token_to(output, action, || {
-                            model_ref.tokenizer.decode(&[token_id])
-                        });
+                        display_thinking_text_to(output, action, &text);
                         let _ = output.flush();
                     },
                 )

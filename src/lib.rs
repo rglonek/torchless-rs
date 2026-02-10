@@ -10,9 +10,13 @@ pub mod tokenizer;
 
 // Chat template support
 pub use chat::{
-    display_thinking_token, display_thinking_token_to, strip_thinking, ANSI_DIM, ANSI_RESET,
+    display_thinking_text_to, display_thinking_token, display_thinking_token_to, strip_thinking,
+    ANSI_DIM, ANSI_RESET,
 };
 pub use chat::{ChatMessage, ChatRole, ChatTemplate, ThinkingState, TokenAction};
+
+// Tokenizer streaming support
+pub use tokenizer::IncrementalDecoder;
 
 // Coding mode support
 pub use coding::{

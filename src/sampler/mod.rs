@@ -249,7 +249,7 @@ pub fn generate(
     config: &SamplingConfig,
     debug: bool,
 ) -> u32 {
-    model.forward(state, token, debug);
+    model.fast_forward(state, token, debug);
     sample_with_config(state, config)
 }
 
@@ -312,7 +312,7 @@ pub fn generate_lazy(
     config: &SamplingConfig,
     debug: bool,
 ) -> u32 {
-    model.forward(state, token, debug);
+    model.fast_forward(state, token, debug);
     sample_with_config(state, config)
 }
 

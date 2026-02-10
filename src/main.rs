@@ -4,12 +4,12 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use torchless::tokenizer::Tokenizer;
 use torchless::{
-    apply_edit, coding_system_prompt, detect_architecture_from_tensors,
-    display_thinking_token_to, expand_file_references, format_edit_diff, generate, generate_lazy,
-    generate_lazy_until_eos, generate_until_eos, init_backend, parse_edit_blocks,
-    print_backend_summary, strip_thinking, BackendPreference, ChatMessage, ChatRole, ChatTemplate,
-    GenerationResult, InferenceState, KVDtype, LazyMistral, Mistral, Parameters, PendingEdit,
-    SamplingConfig, SelfSpeculativeDecoder, SpeculativeConfig, ThinkingState,
+    apply_edit, coding_system_prompt, detect_architecture_from_tensors, display_thinking_text_to,
+    expand_file_references, format_edit_diff, generate, generate_lazy, generate_lazy_until_eos,
+    generate_until_eos, init_backend, parse_edit_blocks, print_backend_summary, strip_thinking,
+    BackendPreference, ChatMessage, ChatRole, ChatTemplate, GenerationResult, InferenceState,
+    KVDtype, LazyMistral, Mistral, Parameters, PendingEdit, SamplingConfig,
+    SelfSpeculativeDecoder, SpeculativeConfig, ThinkingState,
 };
 
 #[cfg(unix)]
@@ -483,7 +483,7 @@ fn main() -> anyhow::Result<()> {
             if debug {
                 eprintln!("\nPrompt token {}/{}", i + 1, tokens.len() - 1);
             }
-            model.forward(&mut state, token, debug);
+            model.fast_forward(&mut state, token, debug);
             state.pos += 1;
         }
 
@@ -497,7 +497,7 @@ fn main() -> anyhow::Result<()> {
 
         if speculative {
             generate_speculative_until_eos(
-                |s, t| model.forward(s, t, debug),
+                |s, t| model.fast_forward(s, t, debug),
                 &model.tokenizer,
                 &mut state,
                 token,
@@ -509,16 +509,18 @@ fn main() -> anyhow::Result<()> {
                 &mut io::stdout(),
             );
         } else {
+            let mut inc_decoder = model.tokenizer.incremental_decoder();
             for i in 0..max_tokens {
                 if debug && i % 10 == 0 {
                     eprintln!("\nGeneration step {}/{}", i, max_tokens);
                 }
                 token = generate_lazy(&model, &mut state, token, &sampling_config, debug);
-                let decoded = model.tokenizer.decode(&[token]);
+                let decoded = inc_decoder.push(token);
                 print!("{}", decoded);
                 io::stdout().flush()?;
                 state.pos += 1;
             }
+            print!("{}", inc_decoder.flush());
         }
     } else {
         // ------------------------------------------------------------------
@@ -556,7 +558,7 @@ fn main() -> anyhow::Result<()> {
             if debug {
                 eprintln!("\nPrompt token {}/{}", i + 1, tokens.len() - 1);
             }
-            model.forward(&mut state, token, debug);
+            model.fast_forward(&mut state, token, debug);
             state.pos += 1;
         }
 
@@ -570,7 +572,7 @@ fn main() -> anyhow::Result<()> {
 
         if speculative {
             generate_speculative_until_eos(
-                |s, t| model.forward(s, t, debug),
+                |s, t| model.fast_forward(s, t, debug),
                 &model.tokenizer,
                 &mut state,
                 token,
@@ -582,16 +584,18 @@ fn main() -> anyhow::Result<()> {
                 &mut io::stdout(),
             );
         } else {
+            let mut inc_decoder = model.tokenizer.incremental_decoder();
             for i in 0..max_tokens {
                 if debug && i % 10 == 0 {
                     eprintln!("\nGeneration step {}/{}", i, max_tokens);
                 }
                 token = generate(&model, &mut state, token, &sampling_config, debug);
-                let decoded = model.tokenizer.decode(&[token]);
+                let decoded = inc_decoder.push(token);
                 print!("{}", decoded);
                 io::stdout().flush()?;
                 state.pos += 1;
             }
+            print!("{}", inc_decoder.flush());
         }
     }
 
@@ -632,6 +636,7 @@ where
     };
 
     let mut decoder = SelfSpeculativeDecoder::new(forward, config, draft_temp, main_temp);
+    let mut inc_decoder = tokenizer.incremental_decoder();
     let mut tokens = Vec::new();
     let mut token = first_token;
     let mut stopped_at_eos = false;
@@ -647,11 +652,11 @@ where
                 stopped_at_eos = true;
                 break;
             }
+            let text = inc_decoder.push(t);
             if let Some(ts) = thinking {
                 let action = ts.process_token(t);
-                display_thinking_token_to(output, action, || tokenizer.decode(&[t]));
+                display_thinking_text_to(output, action, &text);
             } else {
-                let text = tokenizer.decode(&[t]);
                 let _ = write!(output, "{}", text);
             }
             let _ = output.flush();
@@ -816,15 +821,16 @@ fn run_chat(
                     if debug && (i % 50 == 0) {
                         eprintln!("Processing prompt token {}/{}", i + 1, tokens.len());
                     }
-                    model.forward(state, token, debug);
+                    model.fast_forward(state, token, debug);
                     state.pos += 1;
                 }
             },
             &mut |state, first_token, eos_ids, config, output| {
                 let debug = config.debug;
+                let mut inc_decoder = model.tokenizer.incremental_decoder();
                 if config.speculative {
                     generate_speculative_until_eos(
-                        |s, t| model.forward(s, t, debug),
+                        |s, t| model.fast_forward(s, t, debug),
                         &model.tokenizer,
                         state,
                         first_token,
@@ -845,10 +851,9 @@ fn run_chat(
                         eos_ids,
                         debug,
                         |token_id| {
+                            let text = inc_decoder.push(token_id);
                             let action = thinking_state.process_token(token_id);
-                            display_thinking_token_to(output, action, || {
-                                model.tokenizer.decode(&[token_id])
-                            });
+                            display_thinking_text_to(output, action, &text);
                             let _ = output.flush();
                         },
                     )
@@ -912,15 +917,16 @@ fn run_chat(
                     if debug && (i % 50 == 0) {
                         eprintln!("Processing prompt token {}/{}", i + 1, tokens.len());
                     }
-                    model.forward(state, token, debug);
+                    model.fast_forward(state, token, debug);
                     state.pos += 1;
                 }
             },
             &mut |state, first_token, eos_ids, config, output| {
                 let debug = config.debug;
+                let mut inc_decoder = model.tokenizer.incremental_decoder();
                 if config.speculative {
                     generate_speculative_until_eos(
-                        |s, t| model.forward(s, t, debug),
+                        |s, t| model.fast_forward(s, t, debug),
                         &model.tokenizer,
                         state,
                         first_token,
@@ -941,10 +947,9 @@ fn run_chat(
                         eos_ids,
                         debug,
                         |token_id| {
+                            let text = inc_decoder.push(token_id);
                             let action = thinking_state.process_token(token_id);
-                            display_thinking_token_to(output, action, || {
-                                model.tokenizer.decode(&[token_id])
-                            });
+                            display_thinking_text_to(output, action, &text);
                             let _ = output.flush();
                         },
                     )

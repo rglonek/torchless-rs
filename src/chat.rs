@@ -644,6 +644,32 @@ where
     }
 }
 
+/// Display already-decoded text to a specific writer according to its [`TokenAction`].
+///
+/// Like [`display_thinking_token_to`], but takes an already-decoded `&str`
+/// instead of a lazy decode closure. Use this with [`IncrementalDecoder`] where
+/// the token must always be pushed through the decoder to maintain its byte buffer,
+/// regardless of whether the text will be displayed.
+///
+/// [`IncrementalDecoder`]: crate::tokenizer::IncrementalDecoder
+pub fn display_thinking_text_to(output: &mut dyn Write, action: TokenAction, text: &str) {
+    match action {
+        TokenAction::Display => {
+            let _ = write!(output, "{}", text);
+        }
+        TokenAction::DisplayDim => {
+            let _ = write!(output, "{}{}{}", ANSI_DIM, text, ANSI_RESET);
+        }
+        TokenAction::ThinkingStart => {
+            let _ = write!(output, "\n{}[thinking] ", ANSI_DIM);
+        }
+        TokenAction::ThinkingEnd => {
+            let _ = writeln!(output, " [/thinking]{}", ANSI_RESET);
+        }
+        TokenAction::Hide => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

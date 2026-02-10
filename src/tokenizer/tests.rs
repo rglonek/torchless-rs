@@ -84,6 +84,86 @@ fn test_byte_fallback() {
     assert_eq!(ids.len(), 3);
 }
 
+/// Test that <0xXX> byte-fallback tokens are decoded to actual bytes.
+/// Cyrillic "е" = UTF-8 bytes [0xD0, 0xB5].
+#[test]
+fn test_decode_hex_fallback_multibyte() {
+    let tokenizer = create_test_tokenizer();
+
+    // Token IDs for <0xD0> and <0xB5> (base 10 + byte value)
+    let d0_id = 10 + 0xD0; // <0xD0>
+    let b5_id = 10 + 0xB5; // <0xB5>
+
+    let decoded = tokenizer.decode(&[d0_id, b5_id]);
+    assert_eq!(decoded, "е"); // Cyrillic small letter ie
+}
+
+/// Test that the incremental decoder correctly buffers partial UTF-8 sequences.
+#[test]
+fn test_incremental_decoder_multibyte() {
+    let tokenizer = create_test_tokenizer();
+    let mut dec = tokenizer.incremental_decoder();
+
+    let d0_id = 10 + 0xD0;
+    let b5_id = 10 + 0xB5;
+
+    // First byte of a 2-byte UTF-8 sequence — should buffer, emit nothing
+    let out1 = dec.push(d0_id);
+    assert_eq!(out1, "");
+
+    // Second byte completes the character
+    let out2 = dec.push(b5_id);
+    assert_eq!(out2, "е");
+}
+
+/// Test incremental decoder with a mix of ASCII and multi-byte tokens.
+#[test]
+fn test_incremental_decoder_mixed() {
+    let tokenizer = create_test_tokenizer();
+    let mut dec = tokenizer.incremental_decoder();
+
+    // 'H' is token ID 2, which is a normal ASCII token
+    let out = dec.push(2);
+    assert_eq!(out, "H");
+
+    // Then push multi-byte Cyrillic
+    let d0_id = 10 + 0xD0;
+    let b5_id = 10 + 0xB5;
+    assert_eq!(dec.push(d0_id), "");
+    assert_eq!(dec.push(b5_id), "е");
+
+    // Flush should return empty since everything was emitted
+    assert_eq!(dec.flush(), "");
+}
+
+/// Test that GPT-2 byte encoding is detected and handled correctly.
+#[test]
+fn test_gpt2_byte_encoding_detection() {
+    use super::build_gpt2_byte_to_unicode;
+
+    let table = build_gpt2_byte_to_unicode();
+    let mut vocab = HashMap::new();
+
+    // Build a vocab using GPT-2 byte encoding
+    for (byte_val, &ch) in table.iter().enumerate() {
+        vocab.insert(ch.to_string(), byte_val as u32);
+    }
+    // Add a multi-char token: "Hello" using GPT-2 chars (all ASCII identity range)
+    vocab.insert("Hello".to_string(), 256);
+
+    let tokenizer = Tokenizer::new(vocab, vec![]);
+
+    // Decode Cyrillic "ем" = bytes [0xD0, 0xB5, 0xD0, 0xBC]
+    // In GPT-2: byte 0xD0 → U+00D0 (Ð), byte 0xB5 → U+00B5 (µ),
+    //           byte 0xBC → U+00BC (¼)
+    let d0 = 0xD0u32; // token for byte 0xD0
+    let b5 = 0xB5u32; // token for byte 0xB5
+    let bc = 0xBCu32; // token for byte 0xBC
+
+    let decoded = tokenizer.decode(&[d0, b5, d0, bc]);
+    assert_eq!(decoded, "ем"); // Cyrillic "em"
+}
+
 // Integration tests with actual vocab - to be added when fixtures are available
 #[test]
 #[ignore]

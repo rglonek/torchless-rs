@@ -120,11 +120,23 @@ impl ChatTemplate {
     /// Resolve EOS token strings to their token IDs using the model's tokenizer.
     ///
     /// Returns all EOS token IDs that were found in the vocabulary.
+    /// Also includes any explicit EOS IDs set on the tokenizer (e.g. from GGUF metadata).
     pub fn eos_token_ids(&self, tokenizer: &Tokenizer) -> Vec<u32> {
-        self.eos_tokens()
+        let mut ids: Vec<u32> = self
+            .eos_tokens()
             .iter()
             .filter_map(|tok| tokenizer.token_id(tok))
-            .collect()
+            .collect();
+
+        // Include explicit EOS IDs (e.g. from GGUF tokenizer.ggml.eos_token_id)
+        // that weren't already resolved via string lookup
+        for &eos_id in tokenizer.explicit_eos_ids() {
+            if !ids.contains(&eos_id) {
+                ids.push(eos_id);
+            }
+        }
+
+        ids
     }
 
     /// Returns (open, close) thinking delimiter tokens, if this architecture

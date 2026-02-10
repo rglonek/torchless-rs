@@ -888,7 +888,7 @@ impl Parameters {
                     hf_name,
                     TensorInfo {
                         dtype: format!("{:?}", info.dtype).to_lowercase(),
-                        shape: info.shape.clone(),
+                        shape: info.shape.iter().copied().rev().collect(),
                         offset: 0, // Not used for GGUF
                         scale_offset: None,
                         scale_size: None,
@@ -1359,7 +1359,7 @@ impl Parameters {
 
                 let shape = match info.shape.len() {
                     1 => [1, info.shape[0]],
-                    _ => [info.shape[0], info.shape[1..].iter().product()],
+                    _ => [info.shape[1..].iter().product(), info.shape[0]],
                 };
 
                 // Map GGMLType to TensorDtype and return as WeightMatrix::Native

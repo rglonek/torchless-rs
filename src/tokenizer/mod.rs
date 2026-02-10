@@ -15,6 +15,8 @@ pub struct Tokenizer {
     merge_to_rank: HashMap<u64, usize>,
     // Maps packed (left, right) pair to the merged token ID
     merge_to_id: HashMap<u64, u32>,
+    // Explicit EOS token IDs (e.g. from GGUF tokenizer.ggml.eos_token_id)
+    explicit_eos_ids: Vec<u32>,
 }
 
 impl Tokenizer {
@@ -55,7 +57,20 @@ impl Tokenizer {
             id_to_token,
             merge_to_rank,
             merge_to_id,
+            explicit_eos_ids: Vec::new(),
         }
+    }
+
+    /// Set explicit EOS token IDs (e.g. from GGUF metadata).
+    ///
+    /// These are used as a fallback when string-based EOS lookup fails.
+    pub fn set_explicit_eos_ids(&mut self, ids: Vec<u32>) {
+        self.explicit_eos_ids = ids;
+    }
+
+    /// Get explicitly configured EOS token IDs.
+    pub fn explicit_eos_ids(&self) -> &[u32] {
+        &self.explicit_eos_ids
     }
 
     /// Pack two u32 token IDs into a u64

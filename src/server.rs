@@ -12,9 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use torchless::{
-    display_thinking_token_to, generate_lazy_until_eos, generate_until_eos, init_backend,
-    BackendPreference, ChatTemplate, InferenceState, KVDtype, LazyMistral, Mistral, Parameters,
-    SamplingConfig, ThinkingState,
+    detect_architecture_from_tensors, display_thinking_token_to, generate_lazy_until_eos,
+    generate_until_eos, init_backend, BackendPreference, ChatTemplate, InferenceState, KVDtype,
+    LazyMistral, Mistral, Parameters, SamplingConfig, ThinkingState,
 };
 
 use crate::{
@@ -73,6 +73,16 @@ pub(crate) fn run_socket_server(
     eprintln!("[server] Loading model from: {}", model_path);
     let params = Parameters::load(model_path)?;
 
+    // Detect architecture and select the correct chat template
+    let tensor_names: Vec<String> = params.tensors.keys().cloned().collect();
+    let architecture = detect_architecture_from_tensors(&tensor_names);
+    let chat_template = ChatTemplate::for_architecture(architecture)
+        .unwrap_or(ChatTemplate::Mistral);
+    eprintln!(
+        "[server] Detected architecture: {} (chat template: {:?})",
+        architecture, chat_template
+    );
+
     // Store shared config values for spawning threads
     let sampling_config = sampling_config.clone();
     let system_prompt = system_prompt.map(|s| s.to_string());
@@ -95,7 +105,6 @@ pub(crate) fn run_socket_server(
         let model_config = probe_model.config.clone();
 
         // Initialize thinking state info from the probe model
-        let chat_template = ChatTemplate::Mistral;
         let thinking_ids = chat_template.thinking_token_ids(&probe_model.tokenizer);
         let thinking_ids = Arc::new(thinking_ids);
         drop(probe_model); // Free the probe model; each thread loads its own
@@ -142,6 +151,7 @@ pub(crate) fn run_socket_server(
                     system_prompt.as_deref(),
                     &model_config,
                     &thinking_ids,
+                    chat_template,
                     max_seq_len,
                     max_tokens,
                     speculative,
@@ -166,7 +176,6 @@ pub(crate) fn run_socket_server(
         let max_tokens = resolve_max_tokens(max_tokens_arg, max_seq_len);
 
         // Initialize thinking state info
-        let chat_template = ChatTemplate::Mistral;
         let thinking_ids = chat_template.thinking_token_ids(&model.tokenizer);
         let thinking_ids = Arc::new(thinking_ids);
 
@@ -210,6 +219,7 @@ pub(crate) fn run_socket_server(
                     &sampling_config,
                     system_prompt.as_deref(),
                     &thinking_ids,
+                    chat_template,
                     max_seq_len,
                     max_tokens,
                     speculative,
@@ -240,6 +250,7 @@ fn handle_connection_lazy(
     system_prompt: Option<&str>,
     model_config: &torchless::Config,
     thinking_ids: &Option<(u32, u32)>,
+    chat_template: ChatTemplate,
     max_seq_len: usize,
     max_tokens: usize,
     speculative: bool,
@@ -276,6 +287,7 @@ fn handle_connection_lazy(
     run_chat_repl(
         state,
         &model.tokenizer,
+        chat_template,
         config,
         max_seq_len,
         &thinking_state,
@@ -342,6 +354,7 @@ fn handle_connection_eager(
     sampling_config: &SamplingConfig,
     system_prompt: Option<&str>,
     thinking_ids: &Option<(u32, u32)>,
+    chat_template: ChatTemplate,
     max_seq_len: usize,
     max_tokens: usize,
     speculative: bool,
@@ -377,6 +390,7 @@ fn handle_connection_eager(
     run_chat_repl(
         state,
         &model.tokenizer,
+        chat_template,
         config,
         max_seq_len,
         &thinking_state,

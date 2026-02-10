@@ -1145,7 +1145,16 @@ impl GGUFLoader {
             })
             .unwrap_or_default();
 
-        Ok(Tokenizer::new(vocab, merges))
+        let mut tokenizer = Tokenizer::new(vocab, merges);
+
+        // Read explicit EOS token ID from GGUF metadata if available
+        if let Some(eos_val) = self.metadata.kv.get("tokenizer.ggml.eos_token_id") {
+            if let Some(eos_id) = eos_val.as_u32() {
+                tokenizer.set_explicit_eos_ids(vec![eos_id]);
+            }
+        }
+
+        Ok(tokenizer)
     }
 
     /// Build a concrete Config from GGUF metadata.
